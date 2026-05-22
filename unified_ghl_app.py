@@ -442,13 +442,73 @@ def fetch_for_account(acc, ghl_start, ghl_end, client_start, client_end, log_cal
     return r_opps, r_ventas
 
 # ---------------------------
+# Range Picker Dialog
+# ---------------------------
+class RangePicker(tk.Toplevel):
+    def __init__(self, parent, title, callback):
+        super().__init__(parent)
+        self.title(title)
+        self.geometry("400x450")
+        self.transient(parent)
+        self.grab_set()
+        self.callback = callback
+
+        self.start_date = None
+        self.end_date = None
+
+        self.label = cctk.CTkLabel(self, text="Seleccione fecha de INICIO", font=cctk.CTkFont(size=14, weight="bold"))
+        self.label.pack(pady=10)
+
+        self.cal = Calendar(self, selectmode='day', background='#0f3460', foreground='white',
+                            headersbackground='#16213e', headersforeground='white',
+                            selectbackground='#76933C', normalbackground='#ffffff',
+                            normalforeground='black', weekendbackground='#ffffff',
+                            weekendforeground='red', othermonthbackground='#f0f0f0',
+                            othermonthforeground='gray')
+        self.cal.pack(padx=20, pady=10, fill="both", expand=True)
+        self.cal.bind("<<CalendarSelected>>", self._on_date_selected)
+
+        self.btn_confirm = cctk.CTkButton(self, text="Confirmar Rango", command=self._confirm, state="disabled")
+        self.btn_confirm.pack(pady=20)
+
+    def _on_date_selected(self, event):
+        selected = self.cal.selection_get()
+        if not self.start_date or (self.start_date and self.end_date):
+            self.start_date = selected
+            self.end_date = None
+            self.label.configure(text=f"Inicio: {selected} - Seleccione FIN")
+            self.cal.calevent_remove('all')
+            self.cal.calevent_add(selected, 'Selección', 'range')
+            self.cal.tag_config('range', background='#76933C')
+            self.btn_confirm.configure(state="disabled")
+        else:
+            if selected < self.start_date:
+                self.end_date = self.start_date
+                self.start_date = selected
+            else:
+                self.end_date = selected
+
+            self.label.configure(text=f"Rango: {self.start_date} al {self.end_date}")
+            self.cal.calevent_remove('all')
+            curr = self.start_date
+            while curr <= self.end_date:
+                self.cal.calevent_add(curr, 'Selección', 'range')
+                curr += timedelta(days=1)
+            self.cal.tag_config('range', background='#76933C')
+            self.btn_confirm.configure(state="normal")
+
+    def _confirm(self):
+        self.callback(self.start_date, self.end_date)
+        self.destroy()
+
+# ---------------------------
 # GUI (CustomTkinter)
 # ---------------------------
 class GHLApp(cctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("GHL Opportunity & Contact Master Pro")
-        self.geometry("1000x800")
+        self.geometry("900x800")
         cctk.set_appearance_mode("dark")
         cctk.set_default_color_theme("blue")
 
@@ -468,7 +528,7 @@ class GHLApp(cctk.CTk):
                                       font=cctk.CTkFont(size=14), text_color="#aaaaaa")
         self.subheader.grid(row=1, column=0, padx=20, pady=(0, 20))
 
-        self.scrollable_frame = cctk.CTkScrollableFrame(self.main_container, fg_color="transparent")
+        self.scrollable_frame = cctk.CTkFrame(self.main_container, fg_color="transparent")
         self.scrollable_frame.grid(row=2, column=0, padx=40, pady=10, sticky="nsew")
         self.scrollable_frame.grid_columnconfigure(0, weight=1)
 
@@ -477,18 +537,13 @@ class GHLApp(cctk.CTk):
         self.opp_frame.grid(row=0, column=0, padx=10, pady=10, sticky="ew")
         self.opp_frame.grid_columnconfigure(0, weight=1)
 
-        cctk.CTkLabel(self.opp_frame, text="CALENDARIO OPORTUNIDADES / VENTAS", font=cctk.CTkFont(size=14, weight="bold"), text_color="#00d2ff").grid(row=0, column=0, pady=(10,0))
-        self.opp_range_label = cctk.CTkLabel(self.opp_frame, text="Seleccione un rango en el calendario", font=cctk.CTkFont(size=12))
-        self.opp_range_label.grid(row=1, column=0, pady=(0,10))
+        cctk.CTkLabel(self.opp_frame, text="OPORTUNIDADES / VENTAS", font=cctk.CTkFont(size=14, weight="bold"), text_color="#00d2ff").grid(row=0, column=0, pady=(10,5))
 
-        self.opp_cal = Calendar(self.opp_frame, selectmode='day', background='#0f3460', foreground='white',
-                                headersbackground='#16213e', headersforeground='white',
-                                selectbackground='#76933C', normalbackground='#1a1a2e',
-                                normalforeground='white', weekendbackground='#1a1a2e',
-                                weekendforeground='#e94560', othermonthbackground='#111111',
-                                othermonthforeground='#555555')
-        self.opp_cal.grid(row=2, column=0, padx=20, pady=10, sticky="ew")
-        self.opp_cal.bind("<<CalendarSelected>>", self._on_opp_date_selected)
+        self.opp_entry = cctk.CTkEntry(self.opp_frame, placeholder_text="Clic para seleccionar rango...", width=300, justify="center")
+        self.opp_entry.grid(row=1, column=0, pady=10, padx=20)
+        self.opp_entry.bind("<Button-1>", lambda e: self._pick_opp_range())
+        self.opp_entry.bind("<FocusIn>", lambda e: self._pick_opp_range())
+
         self.opp_start = None
         self.opp_end = None
 
@@ -497,23 +552,18 @@ class GHLApp(cctk.CTk):
         self.con_frame.grid(row=1, column=0, padx=10, pady=10, sticky="ew")
         self.con_frame.grid_columnconfigure(0, weight=1)
 
-        cctk.CTkLabel(self.con_frame, text="CALENDARIO CONTACTOS (GUATEMALA)", font=cctk.CTkFont(size=14, weight="bold"), text_color="#00d2ff").grid(row=0, column=0, pady=(10,0))
-        self.con_range_label = cctk.CTkLabel(self.con_frame, text="Seleccione un rango en el calendario", font=cctk.CTkFont(size=12))
-        self.con_range_label.grid(row=1, column=0, pady=(0,10))
+        cctk.CTkLabel(self.con_frame, text="CONTACTOS (GUATEMALA)", font=cctk.CTkFont(size=14, weight="bold"), text_color="#00d2ff").grid(row=0, column=0, pady=(10,5))
 
-        self.con_cal = Calendar(self.con_frame, selectmode='day', background='#0f3460', foreground='white',
-                                headersbackground='#16213e', headersforeground='white',
-                                selectbackground='#76933C', normalbackground='#1a1a2e',
-                                normalforeground='white', weekendbackground='#1a1a2e',
-                                weekendforeground='#e94560', othermonthbackground='#111111',
-                                othermonthforeground='#555555')
-        self.con_cal.grid(row=2, column=0, padx=20, pady=10, sticky="ew")
-        self.con_cal.bind("<<CalendarSelected>>", self._on_con_date_selected)
+        self.con_entry = cctk.CTkEntry(self.con_frame, placeholder_text="Clic para seleccionar rango...", width=300, justify="center")
+        self.con_entry.grid(row=1, column=0, pady=10, padx=20)
+        self.con_entry.bind("<Button-1>", lambda e: self._pick_con_range())
+        self.con_entry.bind("<FocusIn>", lambda e: self._pick_con_range())
+
         self.con_start = None
         self.con_end = None
 
         self.console = cctk.CTkTextbox(self.main_container, corner_radius=10, fg_color="#0f3460", border_width=1, border_color="#16213e",
-                                     font=("Consolas", 12), text_color="#e94560", height=200)
+                                     font=("Consolas", 12), text_color="#e94560", height=150)
         self.console.grid(row=3, column=0, padx=50, pady=10, sticky="ew")
 
         self.progress = cctk.CTkProgressBar(self.main_container, height=15, progress_color="#00d2ff")
@@ -525,49 +575,25 @@ class GHLApp(cctk.CTk):
                                      fg_color="#76933C", hover_color="#5d7530")
         self.run_btn.grid(row=5, column=0, padx=50, pady=(10, 30), sticky="ew")
 
-        self.log("SISTEMA INICIADO. Esperando parámetros...")
+        self.log("SISTEMA INICIADO. Seleccione los rangos de fecha.")
 
-    def _update_range_label(self, label, start, end):
-        if start and end:
-            label.configure(text=f"RANGO: {start.strftime('%Y-%m-%d')}  A  {end.strftime('%Y-%m-%d')}", text_color="#00ff00")
-        elif start:
-            label.configure(text=f"INICIO: {start.strftime('%Y-%m-%d')} (Seleccione fecha fin)", text_color="#ffff00")
-        else:
-            label.configure(text="Seleccione un rango en el calendario", text_color="#aaaaaa")
+    def _pick_opp_range(self):
+        RangePicker(self, "Rango de Oportunidades", self._set_opp_range)
 
-    def _handle_range_selection(self, cal, current_start, current_end, label):
-        selected_date = cal.selection_get()
-        if not current_start or (current_start and current_end):
-            # Iniciar nuevo rango
-            cal.calevent_remove('all')
-            cal.calevent_add(selected_date, 'Selección', 'range')
-            cal.tag_config('range', background='#76933C')
-            new_start = selected_date
-            new_end = None
-        else:
-            # Completar rango
-            if selected_date < current_start:
-                new_start = selected_date
-                new_end = current_start
-            else:
-                new_start = current_start
-                new_end = selected_date
+    def _set_opp_range(self, start, end):
+        self.opp_start = start
+        self.opp_end = end
+        self.opp_entry.delete(0, "end")
+        self.opp_entry.insert(0, f"{start} - {end}")
 
-            cal.calevent_remove('all')
-            curr = new_start
-            while curr <= new_end:
-                cal.calevent_add(curr, 'Selección', 'range')
-                curr += timedelta(days=1)
-            cal.tag_config('range', background='#76933C')
+    def _pick_con_range(self):
+        RangePicker(self, "Rango de Contactos", self._set_con_range)
 
-        self._update_range_label(label, new_start, new_end)
-        return new_start, new_end
-
-    def _on_opp_date_selected(self, event):
-        self.opp_start, self.opp_end = self._handle_range_selection(self.opp_cal, self.opp_start, self.opp_end, self.opp_range_label)
-
-    def _on_con_date_selected(self, event):
-        self.con_start, self.con_end = self._handle_range_selection(self.con_cal, self.con_start, self.con_end, self.con_range_label)
+    def _set_con_range(self, start, end):
+        self.con_start = start
+        self.con_end = end
+        self.con_entry.delete(0, "end")
+        self.con_entry.insert(0, f"{start} - {end}")
 
     def log(self, text):
         self.console.configure(state="normal")
@@ -593,25 +619,18 @@ class GHLApp(cctk.CTk):
         threading.Thread(target=self.execute, args=(sd_opp_dt, ed_opp_dt, sd_con_dt, ed_con_dt), daemon=True).start()
 
     def execute(self, sd_opp, ed_opp, sd_con, ed_con):
-        # Preparar para Oportunidades
         s_iso_opp = sd_opp.strftime("%Y-%m-%d")
         e_iso_opp = ed_opp.strftime("%Y-%m-%d")
         ghl_start_opp = sd_opp.strftime("%Y-%m-%dT00:00:00.000Z")
         ghl_end_opp = ed_opp.strftime("%Y-%m-%dT23:59:59.999Z")
 
-        # Preparar para Contactos (Guatemala UTC)
         start_utc_con, end_utc_con = make_utc_range(sd_con, ed_con)
 
         self.log(f"Iniciando extracción unificada.")
-        self.log(f"Oportunidades: {s_iso_opp} a {e_iso_opp}")
-        self.log(f"Contactos (GT): {sd_con.strftime('%Y-%m-%d')} a {ed_con.strftime('%Y-%m-%d')}")
-
         res_o, res_v, res_c = [], [], []
 
         with ThreadPoolExecutor(max_workers=5) as ex:
-            # Ejecutar Oportunidades
             futures_opp = {ex.submit(fetch_for_account, acc, ghl_start_opp, ghl_end_opp, s_iso_opp, e_iso_opp, self.log): acc for acc in ACCOUNTS}
-            # Ejecutar Contactos
             futures_con = {ex.submit(fetch_contacts_for_account, acc, start_utc_con, end_utc_con, self.log): acc for acc in ACCOUNTS}
 
             total_tasks = len(futures_opp) + len(futures_con)
@@ -635,15 +654,14 @@ class GHLApp(cctk.CTk):
         if res_o or res_c:
             self.generate_excel(res_o, res_v, res_c)
         else:
-            self.log("AVISO: No se encontraron registros en ningún reporte.")
+            self.log("AVISO: No se encontraron registros.")
             self.after(0, lambda: messagebox.showwarning("Atención", "No se encontraron datos."))
 
         self.after(0, lambda: self.run_btn.configure(state="normal", text="G E N E R A R   R E P O R T E   U N I F I C A D O"))
 
     def generate_excel(self, res_o, res_v, res_c):
-        self.log("Compilando datos en Excel...")
+        self.log("Compilando Excel...")
 
-        # --- OPORTUNIDADES ---
         df_o = pd.DataFrame(res_o)
         head = ["secuencia", "fase", "Valor del cliente potencial", "asignado", "Creado", "Ultimo Actualizado", "Seguidores", "Notas", "etiquetas", "estado",
                 "Fecha de Venta", "NIT", "Camas y Combos SKU", "Cantidad Camas y Combo SKU", "Camas y Combos SKU1", "Cantidad Camas y Combo SKU1",
@@ -658,7 +676,6 @@ class GHLApp(cctk.CTk):
             extra_products = [c for c in df_o.columns if c not in set(head + tail)]
             df_o = df_o[head + extra_products + tail]
 
-        # --- VENTAS ---
         df_v = pd.DataFrame(res_v)
         v_cols = ["ID CONTACTO", "NIT", "NOMBRE", "TEL1", "TEL2", "VENDEDOR", "MUNICIPIO", "DIRECCION", "RCF", "canal", "DEPARTAMENTO", "FECHA",
                   "SKU", "DESCRIPCION", "Cantidad de combo", "MARCA", "UBICACION", "ANILLO", "COMENTARIOS", "ID Oportunidad", "BODEGAF", "TOTAL DOCTO", "PRECIO COMBO"]
@@ -667,7 +684,6 @@ class GHLApp(cctk.CTk):
                 if c not in df_v.columns: df_v[c] = ""
             df_v = df_v[v_cols]
 
-        # --- CONTACTOS ---
         df_c = pd.DataFrame(res_c)
         c_cols = ["id", "dateAdded", "assignedToName", "secuencia", "Anuncio"]
         if not df_c.empty:
@@ -682,7 +698,6 @@ class GHLApp(cctk.CTk):
             df_c.to_excel(writer, sheet_name='CONTACTOS', index=False)
             pd.DataFrame().to_excel(writer, sheet_name='Hoja1', index=False)
 
-            # Formato Hoja VENTAS
             if not df_v.empty:
                 ws_v = writer.book['VENTAS']
                 idx_bus = len(v_cols) + 1
@@ -702,7 +717,7 @@ class GHLApp(cctk.CTk):
                         for c in range(1, idx_bus + 1): ws_v.cell(row=r, column=c).fill = current_fill
 
         self.log(f"¡EXITO! Archivo generado: {fn}")
-        self.after(0, lambda: messagebox.showinfo("Éxito", f"Reporte unificado generado con éxito:\n{fn}"))
+        self.after(0, lambda: messagebox.showinfo("Éxito", f"Reporte generado:\n{fn}"))
 
 if __name__ == "__main__":
     app = GHLApp()
