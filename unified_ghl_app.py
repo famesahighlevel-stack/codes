@@ -441,7 +441,7 @@ def fetch_for_account(acc, ghl_start, ghl_end, client_start, client_end, log_cal
     return r_opps, r_ventas
 
 # ---------------------------
-# Floating Two-Click Picker
+# Improved Floating Picker
 # ---------------------------
 class FloatingRangePicker(cctk.CTkFrame):
     def __init__(self, parent, title):
@@ -449,12 +449,11 @@ class FloatingRangePicker(cctk.CTkFrame):
         self.start_date = None
         self.end_date = None
         self.pop = None
-        self.selection_step = 0 # 0: none, 1: start selected
+        self.selection_step = 0
 
         self.lbl = cctk.CTkLabel(self, text=title, font=("Segoe UI", 22, "bold"))
         self.lbl.pack(anchor="w", padx=20, pady=(20,10))
 
-        # Two entry fields for Start and End
         self.entry_frame = cctk.CTkFrame(self, fg_color="transparent")
         self.entry_frame.pack(padx=20, pady=(10,20), fill="x")
 
@@ -478,11 +477,11 @@ class FloatingRangePicker(cctk.CTkFrame):
         self.pop.attributes("-topmost", True)
 
         # Position exactly below entry frame
+        self.entry_frame.update_idletasks()
         x = self.entry_frame.winfo_rootx()
         y = self.entry_frame.winfo_rooty() + self.entry_frame.winfo_height() + 2
         self.pop.geometry(f"300x320+{x}+{y}")
 
-        # Click outside to close (better implementation)
         self.pop.bind("<FocusOut>", self.on_focus_out)
 
         container = cctk.CTkFrame(self.pop, corner_radius=10, border_width=1, border_color="#76933C", fg_color="#1a1a2e")
@@ -496,39 +495,50 @@ class FloatingRangePicker(cctk.CTkFrame):
                             weekendforeground='#e94560', othermonthbackground='#111111',
                             othermonthforeground='#555555')
         self.cal.pack(pady=10, padx=10, fill="both", expand=True)
+
+        # We use a custom event to capture clicks correctly
         self.cal.bind("<<CalendarSelected>>", self.handle_click)
 
-        self.info_lbl = cctk.CTkLabel(container, text="1. Seleccione fecha de INICIO", font=("Segoe UI", 11), text_color="#aaaaaa")
+        self.info_lbl = cctk.CTkLabel(container, text="1. Toque fecha de INICIO", font=("Segoe UI", 11), text_color="#aaaaaa")
         self.info_lbl.pack(pady=(0,10))
 
         self.selection_step = 0
         self.pop.focus_set()
 
     def on_focus_out(self, event):
-        # Only destroy if the new focus is not part of the popup
         if self.pop:
             new_focus = self.pop.focus_get()
             if new_focus is None or not str(new_focus).startswith(str(self.pop)):
-                self.pop.destroy()
-                self.pop = None
+                # Small delay to allow click event to trigger before closing
+                self.after(200, self._safe_close)
+
+    def _safe_close(self):
+        if self.pop and self.pop.winfo_exists():
+            self.pop.destroy()
+            self.pop = None
 
     def handle_click(self, event):
+        # We use the widget's get_date() which always returns the currently clicked/selected date
         date_str = self.cal.get_date()
         date_obj = datetime.strptime(date_str, "%Y-%m-%d").date()
 
         if self.selection_step == 0:
-            # First click: Start date
+            # Step 1: Start date selected
             self.start_date = date_obj
             self.entry_start.delete(0, "end")
             self.entry_start.insert(0, str(self.start_date))
+            self.entry_end.delete(0, "end") # Clear end while picking
 
-            self.info_lbl.configure(text=f"2. Seleccione fecha de FIN", text_color="#ffff00")
+            self.info_lbl.configure(text=f"2. Toque fecha de FIN", text_color="#ffff00")
+
+            # Visual feedback on calendar
             self.cal.calevent_remove('all')
             self.cal.calevent_add(date_obj, 'Selección', 'range')
             self.cal.tag_config('range', background='#76933C')
+
             self.selection_step = 1
         else:
-            # Second click: End date
+            # Step 2: End date selected
             if date_obj < self.start_date:
                 self.end_date = self.start_date
                 self.start_date = date_obj
@@ -540,9 +550,8 @@ class FloatingRangePicker(cctk.CTkFrame):
             self.entry_end.delete(0, "end")
             self.entry_end.insert(0, str(self.end_date))
 
-            # Close popup
-            self.pop.destroy()
-            self.pop = None
+            # Auto-close
+            self._safe_close()
             self.selection_step = 0
 
 # ---------------------------
