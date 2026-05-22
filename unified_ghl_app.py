@@ -441,7 +441,7 @@ def fetch_for_account(acc, ghl_start, ghl_end, client_start, client_end, log_cal
     return r_opps, r_ventas
 
 # ---------------------------
-# Definitive DUAL-FIELD Range Picker
+# DEFINITIVE INDEPENDENT DATE PICKER
 # ---------------------------
 class FloatingRangePicker(cctk.CTkFrame):
     def __init__(self, parent, title):
@@ -449,7 +449,6 @@ class FloatingRangePicker(cctk.CTkFrame):
         self.start_date = None
         self.end_date = None
         self.pop = None
-        self.selection_step = 0
 
         self.lbl = cctk.CTkLabel(self, text=title, font=("Segoe UI", 22, "bold"))
         self.lbl.pack(anchor="w", padx=20, pady=(20,10))
@@ -460,26 +459,27 @@ class FloatingRangePicker(cctk.CTkFrame):
 
         self.entry_start = cctk.CTkEntry(self.entry_frame, placeholder_text="Inicio", height=42, corner_radius=12, font=("Segoe UI", 12), justify="center", width=120, state="readonly")
         self.entry_start.pack(side="left", expand=True, fill="x", padx=(0,5))
-        self.entry_start.bind("<Button-1>", lambda e: self.open_calendar())
+        self.entry_start.bind("<Button-1>", lambda e: self.open_calendar(self.entry_start, "start"))
 
         self.arrow_lbl = cctk.CTkLabel(self.entry_frame, text="→", font=("Segoe UI", 16, "bold"))
         self.arrow_lbl.pack(side="left")
 
         self.entry_end = cctk.CTkEntry(self.entry_frame, placeholder_text="Fin", height=42, corner_radius=12, font=("Segoe UI", 12), justify="center", width=120, state="readonly")
         self.entry_end.pack(side="left", expand=True, fill="x", padx=(5,0))
-        self.entry_end.bind("<Button-1>", lambda e: self.open_calendar())
+        self.entry_end.bind("<Button-1>", lambda e: self.open_calendar(self.entry_end, "end"))
 
-    def open_calendar(self):
-        if self.pop: return
+    def open_calendar(self, target_entry, date_type):
+        if self.pop:
+            self.close_calendar()
 
         self.update_idletasks()
-        x = self.entry_frame.winfo_rootx()
-        y = self.entry_frame.winfo_rooty() + self.entry_frame.winfo_height() + 5
+        x = target_entry.winfo_rootx()
+        y = target_entry.winfo_rooty() + target_entry.winfo_height() + 5
 
         self.pop = tk.Toplevel(self)
         self.pop.overrideredirect(True)
         self.pop.attributes("-topmost", True)
-        self.pop.geometry(f"320x380+{x}+{y}")
+        self.pop.geometry(f"320x350+{x}+{y}")
         self.pop.grab_set()
 
         container = cctk.CTkFrame(self.pop, corner_radius=15, border_width=2, border_color="#76933C", fg_color="#ffffff")
@@ -488,7 +488,8 @@ class FloatingRangePicker(cctk.CTkFrame):
         header = tk.Frame(container, bg="#ffffff", height=40)
         header.pack(fill="x", padx=10, pady=5)
 
-        self.info_lbl = tk.Label(header, text="SELECCIONE INICIO", font=("Segoe UI", 10, "bold"), fg="#333333", bg="#ffffff")
+        txt = "ELIGE FECHA INICIO" if date_type == "start" else "ELIGE FECHA FIN"
+        self.info_lbl = tk.Label(header, text=txt, font=("Segoe UI", 10, "bold"), fg="#333333", bg="#ffffff")
         self.info_lbl.pack(side="left")
 
         close_btn = tk.Button(header, text="✕", font=("Arial", 12), bd=0, bg="#ffffff", activebackground="#eeeeee", command=self.close_calendar)
@@ -504,20 +505,8 @@ class FloatingRangePicker(cctk.CTkFrame):
                             borderwidth=0)
         self.cal.pack(pady=10, padx=15, fill="both", expand=True)
 
-        # KEY: Using trace or polling for selection change to be 100% sure
-        def check_sel():
-            if not self.pop: return
-
-            current_date = self.cal.get_date()
-            if not hasattr(self, "_last_sel") or self._last_sel != current_date:
-                self._last_sel = current_date
-                self._on_click()
-
-            self.pop.after(100, check_sel)
-
-        self._last_sel = self.cal.get_date()
-        self.selection_step = 0
-        self.pop.after(100, check_sel)
+        # KEY: Simple direct binding. No clicks outside, no range logic.
+        self.cal.bind("<<CalendarSelected>>", lambda e: self._on_date_selected(target_entry, date_type))
         self.pop.focus_set()
 
     def close_calendar(self):
@@ -526,39 +515,22 @@ class FloatingRangePicker(cctk.CTkFrame):
             self.pop.destroy()
             self.pop = None
 
-    def _on_click(self):
+    def _on_date_selected(self, target_entry, date_type):
         date_str = self.cal.get_date()
         date_obj = datetime.strptime(date_str, "%Y-%m-%d").date()
 
-        if self.selection_step == 0:
+        if date_type == "start":
             self.start_date = date_obj
-            self._update_entry(self.entry_start, str(self.start_date))
-            self._update_entry(self.entry_end, "")
-            self.info_lbl.config(text="SELECCIONE FIN", fg="#1890ff")
-
-            self.cal.calevent_remove('all')
-            self.cal.calevent_add(date_obj, 'range', 'range')
-            self.cal.tag_config('range', background='#e6f7ff', foreground='black')
-
-            self.selection_step = 1
         else:
-            if date_obj < self.start_date:
-                self.end_date = self.start_date
-                self.start_date = date_obj
-            else:
-                self.end_date = date_obj
+            self.end_date = date_obj
 
-            self._update_entry(self.entry_start, str(self.start_date))
-            self._update_entry(self.entry_end, str(self.end_date))
+        target_entry.configure(state="normal")
+        target_entry.delete(0, "end")
+        target_entry.insert(0, str(date_obj))
+        target_entry.configure(state="readonly")
 
-            self.after(300, self.close_calendar)
-            self.selection_step = 0
-
-    def _update_entry(self, entry, value):
-        entry.configure(state="normal")
-        entry.delete(0, "end")
-        entry.insert(0, value)
-        entry.configure(state="readonly")
+        # Close immediately after ONE selection
+        self.after(200, self.close_calendar)
 
 # ---------------------------
 # APP
@@ -574,31 +546,37 @@ class App(cctk.CTk):
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(1, weight=1)
 
+        # HEADER
         header = cctk.CTkFrame(self, height=80, corner_radius=0)
         header.grid(row=0, column=0, sticky="ew")
         title_lbl = cctk.CTkLabel(header, text="📊 DUPAZA REPORT PRO", font=("Segoe UI", 28, "bold"))
         title_lbl.pack(side="left", padx=25, pady=20)
 
+        # BODY
         body = cctk.CTkFrame(self, fg_color="transparent")
         body.grid(row=1, column=0, sticky="nsew", padx=20, pady=20)
         body.grid_columnconfigure((0,1), weight=1)
 
+        # CONTACTOS
         self.contacts_picker = FloatingRangePicker(body, "📇 CONTACTOS")
         self.contacts_picker.grid(row=0, column=0, padx=10, sticky="ew")
 
+        # VENTAS
         self.sales_picker = FloatingRangePicker(body, "💰 VENTAS")
         self.sales_picker.grid(row=0, column=1, padx=10, sticky="ew")
 
+        # GENERATE BUTTON
         self.generate_btn = cctk.CTkButton(self, text="🚀 GENERAR EXCEL", height=45, width=220, font=("Segoe UI", 15, "bold"), corner_radius=14, command=self.start_process)
         self.generate_btn.grid(row=2, column=0, pady=10)
 
+        # LOGS
         logs_frame = cctk.CTkFrame(self, height=120, corner_radius=18)
         logs_frame.grid(row=3, column=0, sticky="ew", padx=20, pady=(0,20))
         cctk.CTkLabel(logs_frame, text="🖥️ ACTIVIDAD", font=("Segoe UI", 16, "bold")).pack(anchor="w", padx=15, pady=(10,5))
         self.console = cctk.CTkTextbox(logs_frame, height=80, font=("Consolas", 12))
         self.console.pack(fill="both", expand=True, padx=15, pady=(0,15))
 
-        self.log("SISTEMA INICIADO. Haga clic en los campos para elegir fechas.")
+        self.log("SISTEMA INICIADO. Haga clic en Inicio o Fin para elegir fechas.")
 
     def log(self, txt):
         hour = datetime.now().strftime("%H:%M:%S")
@@ -609,10 +587,10 @@ class App(cctk.CTk):
 
     def start_process(self):
         if not self.sales_picker.start_date or not self.sales_picker.end_date:
-            messagebox.showwarning("Atención", "Elija el rango de VENTAS.")
+            messagebox.showwarning("Atención", "Elija fechas de VENTAS.")
             return
         if not self.contacts_picker.start_date or not self.contacts_picker.end_date:
-            messagebox.showwarning("Atención", "Elija el rango de CONTACTOS.")
+            messagebox.showwarning("Atención", "Elija fechas de CONTACTOS.")
             return
 
         self.generate_btn.configure(state="disabled", text="🚀 PROCESANDO...")
