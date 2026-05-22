@@ -441,39 +441,49 @@ def fetch_for_account(acc, ghl_start, ghl_end, client_start, client_end, log_cal
     return r_opps, r_ventas
 
 # ---------------------------
-# Floating Range Picker
+# Floating Two-Click Picker
 # ---------------------------
 class FloatingRangePicker(cctk.CTkFrame):
     def __init__(self, parent, title):
         super().__init__(parent, corner_radius=20)
         self.start_date = None
         self.end_date = None
-        self.selected_dates = []
         self.pop = None
+        self.selection_step = 0 # 0: none, 1: start selected
 
         self.lbl = cctk.CTkLabel(self, text=title, font=("Segoe UI", 22, "bold"))
         self.lbl.pack(anchor="w", padx=20, pady=(20,10))
 
-        self.entry = cctk.CTkEntry(self, placeholder_text="Seleccionar rango...", height=42, corner_radius=12, font=("Segoe UI", 14), justify="center")
-        self.entry.pack(padx=20, pady=(10,20), fill="x")
-        self.entry.bind("<Button-1>", lambda e: self.show_calendar())
-        self.entry.bind("<FocusIn>", lambda e: self.show_calendar())
+        # Two entry fields for Start and End
+        self.entry_frame = cctk.CTkFrame(self, fg_color="transparent")
+        self.entry_frame.pack(padx=20, pady=(10,20), fill="x")
+
+        self.entry_start = cctk.CTkEntry(self.entry_frame, placeholder_text="Inicio", height=42, corner_radius=12, font=("Segoe UI", 12), justify="center", width=120)
+        self.entry_start.pack(side="left", expand=True, fill="x", padx=(0,5))
+        self.entry_start.bind("<Button-1>", lambda e: self.show_calendar())
+
+        self.arrow_lbl = cctk.CTkLabel(self.entry_frame, text="→", font=("Segoe UI", 16, "bold"))
+        self.arrow_lbl.pack(side="left")
+
+        self.entry_end = cctk.CTkEntry(self.entry_frame, placeholder_text="Fin", height=42, corner_radius=12, font=("Segoe UI", 12), justify="center", width=120)
+        self.entry_end.pack(side="left", expand=True, fill="x", padx=(5,0))
+        self.entry_end.bind("<Button-1>", lambda e: self.show_calendar())
 
     def show_calendar(self):
         if self.pop and self.pop.winfo_exists():
             return
 
         self.pop = tk.Toplevel(self)
-        self.pop.overrideredirect(True) # Remove window borders
+        self.pop.overrideredirect(True)
         self.pop.attributes("-topmost", True)
 
-        # Position exactly below entry
-        x = self.entry.winfo_rootx()
-        y = self.entry.winfo_rooty() + self.entry.winfo_height() + 2
-        self.pop.geometry(f"300x350+{x}+{y}")
+        # Position exactly below entry frame
+        x = self.entry_frame.winfo_rootx()
+        y = self.entry_frame.winfo_rooty() + self.entry_frame.winfo_height() + 2
+        self.pop.geometry(f"300x320+{x}+{y}")
 
-        # Click outside to close
-        self.pop.bind("<FocusOut>", lambda e: self.pop.destroy())
+        # Click outside to close (better implementation)
+        self.pop.bind("<FocusOut>", self.on_focus_out)
 
         container = cctk.CTkFrame(self.pop, corner_radius=10, border_width=1, border_color="#76933C", fg_color="#1a1a2e")
         container.pack(fill="both", expand=True)
@@ -486,36 +496,54 @@ class FloatingRangePicker(cctk.CTkFrame):
                             weekendforeground='#e94560', othermonthbackground='#111111',
                             othermonthforeground='#555555')
         self.cal.pack(pady=10, padx=10, fill="both", expand=True)
+        self.cal.bind("<<CalendarSelected>>", self.handle_click)
 
-        self.info_lbl = cctk.CTkLabel(container, text="Seleccione Inicio", font=("Segoe UI", 12), text_color="#aaaaaa")
-        self.info_lbl.pack(pady=2)
+        self.info_lbl = cctk.CTkLabel(container, text="1. Seleccione fecha de INICIO", font=("Segoe UI", 11), text_color="#aaaaaa")
+        self.info_lbl.pack(pady=(0,10))
 
-        btn_sel = cctk.CTkButton(container, text="Confirmar", command=self.on_date_selected, fg_color="#76933C", hover_color="#5d7530")
-        btn_sel.pack(pady=10)
-
-        self.selected_dates = []
+        self.selection_step = 0
         self.pop.focus_set()
 
-    def on_date_selected(self):
+    def on_focus_out(self, event):
+        # Only destroy if the new focus is not part of the popup
+        if self.pop:
+            new_focus = self.pop.focus_get()
+            if new_focus is None or not str(new_focus).startswith(str(self.pop)):
+                self.pop.destroy()
+                self.pop = None
+
+    def handle_click(self, event):
         date_str = self.cal.get_date()
         date_obj = datetime.strptime(date_str, "%Y-%m-%d").date()
 
-        self.selected_dates.append(date_obj)
+        if self.selection_step == 0:
+            # First click: Start date
+            self.start_date = date_obj
+            self.entry_start.delete(0, "end")
+            self.entry_start.insert(0, str(self.start_date))
 
-        if len(self.selected_dates) == 1:
-            self.info_lbl.configure(text=f"Inicio: {date_str} - Seleccione Fin", text_color="#ffff00")
+            self.info_lbl.configure(text=f"2. Seleccione fecha de FIN", text_color="#ffff00")
+            self.cal.calevent_remove('all')
             self.cal.calevent_add(date_obj, 'Selección', 'range')
             self.cal.tag_config('range', background='#76933C')
+            self.selection_step = 1
         else:
-            d1, d2 = self.selected_dates[0], self.selected_dates[-1]
-            if d1 > d2: d1, d2 = d2, d1
+            # Second click: End date
+            if date_obj < self.start_date:
+                self.end_date = self.start_date
+                self.start_date = date_obj
+            else:
+                self.end_date = date_obj
 
-            self.start_date, self.end_date = d1, d2
-            self.entry.delete(0, "end")
-            self.entry.insert(0, f"{self.start_date}  →  {self.end_date}")
+            self.entry_start.delete(0, "end")
+            self.entry_start.insert(0, str(self.start_date))
+            self.entry_end.delete(0, "end")
+            self.entry_end.insert(0, str(self.end_date))
 
+            # Close popup
             self.pop.destroy()
             self.pop = None
+            self.selection_step = 0
 
 # ---------------------------
 # APP
@@ -524,7 +552,7 @@ class App(cctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("DUPAZA REPORT PRO")
-        self.geometry("950x650")
+        self.geometry("950x600")
         cctk.set_appearance_mode("dark")
         cctk.set_default_color_theme("green")
 
