@@ -441,7 +441,7 @@ def fetch_for_account(acc, ghl_start, ghl_end, client_start, client_end, log_cal
     return r_opps, r_ventas
 
 # ---------------------------
-# Definitive TWO-FIELD Floating Picker
+# Definitive DUAL-FIELD Range Picker
 # ---------------------------
 class FloatingRangePicker(cctk.CTkFrame):
     def __init__(self, parent, title):
@@ -454,7 +454,7 @@ class FloatingRangePicker(cctk.CTkFrame):
         self.lbl = cctk.CTkLabel(self, text=title, font=("Segoe UI", 22, "bold"))
         self.lbl.pack(anchor="w", padx=20, pady=(20,10))
 
-        # Two entry fields as requested
+        # Two separate entry fields
         self.entry_frame = cctk.CTkFrame(self, fg_color="transparent")
         self.entry_frame.pack(padx=20, pady=(10,20), fill="x")
 
@@ -473,7 +473,6 @@ class FloatingRangePicker(cctk.CTkFrame):
         if self.pop: return
 
         self.update_idletasks()
-        # Position below the entry frame
         x = self.entry_frame.winfo_rootx()
         y = self.entry_frame.winfo_rooty() + self.entry_frame.winfo_height() + 5
 
@@ -495,7 +494,6 @@ class FloatingRangePicker(cctk.CTkFrame):
         close_btn = tk.Button(header, text="✕", font=("Arial", 12), bd=0, bg="#ffffff", activebackground="#eeeeee", command=self.close_calendar)
         close_btn.pack(side="right")
 
-        # High contrast Blue/White style
         self.cal = Calendar(container, selectmode="day", date_pattern="yyyy-mm-dd",
                             background='white', foreground='black',
                             headersbackground='white', headersforeground='black',
@@ -506,10 +504,20 @@ class FloatingRangePicker(cctk.CTkFrame):
                             borderwidth=0)
         self.cal.pack(pady=10, padx=15, fill="both", expand=True)
 
-        # Binding directly to the Selection event
-        self.cal.bind("<<CalendarSelected>>", self._on_date_selected)
+        # KEY: Using trace or polling for selection change to be 100% sure
+        def check_sel():
+            if not self.pop: return
 
+            current_date = self.cal.get_date()
+            if not hasattr(self, "_last_sel") or self._last_sel != current_date:
+                self._last_sel = current_date
+                self._on_click()
+
+            self.pop.after(100, check_sel)
+
+        self._last_sel = self.cal.get_date()
         self.selection_step = 0
+        self.pop.after(100, check_sel)
         self.pop.focus_set()
 
     def close_calendar(self):
@@ -518,28 +526,22 @@ class FloatingRangePicker(cctk.CTkFrame):
             self.pop.destroy()
             self.pop = None
 
-    def _on_date_selected(self, event):
-        if not self.pop: return
-
+    def _on_click(self):
         date_str = self.cal.get_date()
         date_obj = datetime.strptime(date_str, "%Y-%m-%d").date()
 
         if self.selection_step == 0:
-            # Step 1: Start date
             self.start_date = date_obj
             self._update_entry(self.entry_start, str(self.start_date))
             self._update_entry(self.entry_end, "")
-
             self.info_lbl.config(text="SELECCIONE FIN", fg="#1890ff")
 
-            # Visual highlight
             self.cal.calevent_remove('all')
             self.cal.calevent_add(date_obj, 'range', 'range')
             self.cal.tag_config('range', background='#e6f7ff', foreground='black')
 
             self.selection_step = 1
         else:
-            # Step 2: End date
             if date_obj < self.start_date:
                 self.end_date = self.start_date
                 self.start_date = date_obj
@@ -549,7 +551,6 @@ class FloatingRangePicker(cctk.CTkFrame):
             self._update_entry(self.entry_start, str(self.start_date))
             self._update_entry(self.entry_end, str(self.end_date))
 
-            # Done: Small delay for visual feedback then close
             self.after(300, self.close_calendar)
             self.selection_step = 0
 
