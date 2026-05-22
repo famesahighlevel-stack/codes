@@ -441,73 +441,81 @@ def fetch_for_account(acc, ghl_start, ghl_end, client_start, client_end, log_cal
     return r_opps, r_ventas
 
 # ---------------------------
-# Range Picker Component
+# Floating Range Picker
 # ---------------------------
-class RangePicker(cctk.CTkFrame):
+class FloatingRangePicker(cctk.CTkFrame):
     def __init__(self, parent, title):
         super().__init__(parent, corner_radius=20)
         self.start_date = None
         self.end_date = None
         self.selected_dates = []
+        self.pop = None
 
         self.lbl = cctk.CTkLabel(self, text=title, font=("Segoe UI", 22, "bold"))
         self.lbl.pack(anchor="w", padx=20, pady=(20,10))
 
-        self.range_btn = cctk.CTkButton(self, text="Seleccionar rango", height=42, corner_radius=12, font=("Segoe UI", 14), command=self.toggle_calendar)
-        self.range_btn.pack(padx=20, pady=(10,20), fill="x")
+        self.entry = cctk.CTkEntry(self, placeholder_text="Seleccionar rango...", height=42, corner_radius=12, font=("Segoe UI", 14), justify="center")
+        self.entry.pack(padx=20, pady=(10,20), fill="x")
+        self.entry.bind("<Button-1>", lambda e: self.show_calendar())
+        self.entry.bind("<FocusIn>", lambda e: self.show_calendar())
 
-        self.cal_container = cctk.CTkFrame(self, fg_color="transparent")
-        # No pack initially
+    def show_calendar(self):
+        if self.pop and self.pop.winfo_exists():
+            return
 
-        self.cal = Calendar(self.cal_container, selectmode="day", date_pattern="yyyy-mm-dd")
-        self.cal.pack(pady=10, padx=20, fill="both", expand=True)
+        self.pop = tk.Toplevel(self)
+        self.pop.overrideredirect(True) # Remove window borders
+        self.pop.attributes("-topmost", True)
 
-        self.info = cctk.CTkLabel(self.cal_container, text="Selecciona inicio y luego final", font=("Segoe UI", 13))
-        self.info.pack(pady=5)
+        # Position exactly below entry
+        x = self.entry.winfo_rootx()
+        y = self.entry.winfo_rooty() + self.entry.winfo_height() + 2
+        self.pop.geometry(f"300x350+{x}+{y}")
 
-        self.btn_select = cctk.CTkButton(self.cal_container, text="Confirmar Selección", command=self.select_date)
-        self.btn_select.pack(pady=10)
+        # Click outside to close
+        self.pop.bind("<FocusOut>", lambda e: self.pop.destroy())
 
-        self.calendar_visible = False
+        container = cctk.CTkFrame(self.pop, corner_radius=10, border_width=1, border_color="#76933C", fg_color="#1a1a2e")
+        container.pack(fill="both", expand=True)
 
-    def toggle_calendar(self):
-        if self.calendar_visible:
-            self.cal_container.pack_forget()
-        else:
-            self.cal_container.pack(fill="x", pady=(0,10))
-            self.selected_dates = []
-            self.info.configure(text="Selecciona inicio y luego final")
-            self.cal.calevent_remove('all')
-        self.calendar_visible = not self.calendar_visible
+        self.cal = Calendar(container, selectmode="day", date_pattern="yyyy-mm-dd",
+                            background='#0f3460', foreground='white',
+                            headersbackground='#16213e', headersforeground='white',
+                            selectbackground='#76933C', normalbackground='#1a1a2e',
+                            normalforeground='white', weekendbackground='#1a1a2e',
+                            weekendforeground='#e94560', othermonthbackground='#111111',
+                            othermonthforeground='#555555')
+        self.cal.pack(pady=10, padx=10, fill="both", expand=True)
 
-    def select_date(self):
+        self.info_lbl = cctk.CTkLabel(container, text="Seleccione Inicio", font=("Segoe UI", 12), text_color="#aaaaaa")
+        self.info_lbl.pack(pady=2)
+
+        btn_sel = cctk.CTkButton(container, text="Confirmar", command=self.on_date_selected, fg_color="#76933C", hover_color="#5d7530")
+        btn_sel.pack(pady=10)
+
+        self.selected_dates = []
+        self.pop.focus_set()
+
+    def on_date_selected(self):
         date_str = self.cal.get_date()
         date_obj = datetime.strptime(date_str, "%Y-%m-%d").date()
 
         self.selected_dates.append(date_obj)
 
         if len(self.selected_dates) == 1:
-            self.info.configure(text=f"Inicio: {date_str} - Seleccione Final")
+            self.info_lbl.configure(text=f"Inicio: {date_str} - Seleccione Fin", text_color="#ffff00")
             self.cal.calevent_add(date_obj, 'Selección', 'range')
             self.cal.tag_config('range', background='#76933C')
-        elif len(self.selected_dates) >= 2:
+        else:
             d1, d2 = self.selected_dates[0], self.selected_dates[-1]
             if d1 > d2: d1, d2 = d2, d1
 
             self.start_date, self.end_date = d1, d2
-            self.range_btn.configure(text=f"{self.start_date}  →  {self.end_date}")
+            self.entry.delete(0, "end")
+            self.entry.insert(0, f"{self.start_date}  →  {self.end_date}")
 
-            # Pintar rango
-            self.cal.calevent_remove('all')
-            curr = d1
-            while curr <= d2:
-                self.cal.calevent_add(curr, 'Selección', 'range')
-                curr += timedelta(days=1)
-            self.cal.tag_config('range', background='#76933C')
-
-            # Auto-close
-            time.sleep(0.3)
-            self.toggle_calendar()
+            self.pop.destroy()
+            self.pop = None
 
 # ---------------------------
 # APP
@@ -516,46 +524,44 @@ class App(cctk.CTk):
     def __init__(self):
         super().__init__()
         self.title("DUPAZA REPORT PRO")
-        self.geometry("1000x850")
+        self.geometry("950x650")
         cctk.set_appearance_mode("dark")
         cctk.set_default_color_theme("green")
 
         self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(2, weight=1)
+        self.grid_rowconfigure(1, weight=1)
 
         # HEADER
         header = cctk.CTkFrame(self, height=80, corner_radius=0)
         header.grid(row=0, column=0, sticky="ew")
-        title = cctk.CTkLabel(header, text="📊 DUPAZA REPORT PRO", font=("Segoe UI", 28, "bold"))
-        title.pack(side="left", padx=25, pady=20)
+        title_lbl = cctk.CTkLabel(header, text="📊 DUPAZA REPORT PRO", font=("Segoe UI", 28, "bold"))
+        title_lbl.pack(side="left", padx=25, pady=20)
 
-        # BODY (Scrollable for the inline calendars)
-        self.scroll_body = cctk.CTkScrollableFrame(self, fg_color="transparent")
-        self.scroll_body.grid(row=1, column=0, sticky="nsew", padx=20, pady=20)
-        self.grid_rowconfigure(1, weight=1)
-
-        self.scroll_body.grid_columnconfigure((0,1), weight=1)
+        # BODY
+        body = cctk.CTkFrame(self, fg_color="transparent")
+        body.grid(row=1, column=0, sticky="nsew", padx=20, pady=20)
+        body.grid_columnconfigure((0,1), weight=1)
 
         # CONTACTOS
-        self.contacts_picker = RangePicker(self.scroll_body, "📇 CONTACTOS")
-        self.contacts_picker.grid(row=0, column=0, padx=10, sticky="nsew")
+        self.contacts_picker = FloatingRangePicker(body, "📇 CONTACTOS")
+        self.contacts_picker.grid(row=0, column=0, padx=10, sticky="ew")
 
-        # VENTAS (Oportunidades)
-        self.sales_picker = RangePicker(self.scroll_body, "💰 VENTAS")
-        self.sales_picker.grid(row=0, column=1, padx=10, sticky="nsew")
+        # VENTAS
+        self.sales_picker = FloatingRangePicker(body, "💰 VENTAS")
+        self.sales_picker.grid(row=0, column=1, padx=10, sticky="ew")
 
         # GENERATE BUTTON
         self.generate_btn = cctk.CTkButton(self, text="🚀 GENERAR EXCEL", height=45, width=220, font=("Segoe UI", 15, "bold"), corner_radius=14, command=self.start_process)
         self.generate_btn.grid(row=2, column=0, pady=10)
 
         # LOGS
-        logs_frame = cctk.CTkFrame(self, height=150, corner_radius=18)
+        logs_frame = cctk.CTkFrame(self, height=120, corner_radius=18)
         logs_frame.grid(row=3, column=0, sticky="ew", padx=20, pady=(0,20))
         cctk.CTkLabel(logs_frame, text="🖥️ ACTIVIDAD", font=("Segoe UI", 16, "bold")).pack(anchor="w", padx=15, pady=(10,5))
-        self.console = cctk.CTkTextbox(logs_frame, height=100, font=("Consolas", 12))
+        self.console = cctk.CTkTextbox(logs_frame, height=80, font=("Consolas", 12))
         self.console.pack(fill="both", expand=True, padx=15, pady=(0,15))
 
-        self.log("SISTEMA INICIADO. Seleccione los rangos de fecha.")
+        self.log("SISTEMA INICIADO. Haga clic en los campos para seleccionar fechas.")
 
     def log(self, txt):
         hour = datetime.now().strftime("%H:%M:%S")
@@ -576,7 +582,6 @@ class App(cctk.CTk):
         threading.Thread(target=self.execute_logic, daemon=True).start()
 
     def execute_logic(self):
-        # Convert dates
         sd_opp = datetime.combine(self.sales_picker.start_date, dt_time.min)
         ed_opp = datetime.combine(self.sales_picker.end_date, dt_time.max)
         sd_con = datetime.combine(self.contacts_picker.start_date, dt_time.min)
