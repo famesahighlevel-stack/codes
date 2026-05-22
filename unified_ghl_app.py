@@ -457,6 +457,7 @@ class FloatingRangePicker(cctk.CTkFrame):
         self.entry_frame = cctk.CTkFrame(self, fg_color="transparent")
         self.entry_frame.pack(padx=20, pady=(10,20), fill="x")
 
+        # Using placeholder and state=readonly logic
         self.entry_start = cctk.CTkEntry(self.entry_frame, placeholder_text="Inicio", height=42, corner_radius=12, font=("Segoe UI", 12), justify="center", width=120)
         self.entry_start.pack(side="left", expand=True, fill="x", padx=(0,5))
         self.entry_start.bind("<Button-1>", lambda e: self.show_calendar())
@@ -471,23 +472,25 @@ class FloatingRangePicker(cctk.CTkFrame):
     def show_calendar(self):
         if self.pop: return
 
+        # Calculate screen position
+        self.entry_frame.update_idletasks()
+        x = self.entry_frame.winfo_rootx()
+        y = self.entry_frame.winfo_rooty() + self.entry_frame.winfo_height() + 5
+
         self.pop = tk.Toplevel(self)
         self.pop.overrideredirect(True)
         self.pop.attributes("-topmost", True)
+        self.pop.geometry(f"320x360+{x}+{y}")
 
-        self.entry_frame.update_idletasks()
-        x = self.entry_frame.winfo_rootx()
-        y = self.entry_frame.winfo_rooty() + self.entry_frame.winfo_height() + 2
-        self.pop.geometry(f"300x320+{x}+{y}")
+        # Use modal grab to prevent focus issues
+        self.pop.grab_set()
 
-        # Logic to close on focus loss (but with robustness)
-        def on_focus_out(event):
-            self.after(200, self._check_close)
-
-        self.pop.bind("<FocusOut>", on_focus_out)
-
-        container = cctk.CTkFrame(self.pop, corner_radius=10, border_width=1, border_color="#76933C", fg_color="#1a1a2e")
+        container = cctk.CTkFrame(self.pop, corner_radius=10, border_width=2, border_color="#76933C", fg_color="#1a1a2e")
         container.pack(fill="both", expand=True)
+
+        # Explicit close button
+        close_btn = cctk.CTkButton(container, text="✕", width=25, height=25, fg_color="transparent", hover_color="#e94560", command=self._safe_close)
+        close_btn.place(relx=1.0, x=-5, y=5, anchor="ne")
 
         self.cal = Calendar(container, selectmode="day", date_pattern="yyyy-mm-dd",
                             background='#0f3460', foreground='white',
@@ -496,28 +499,24 @@ class FloatingRangePicker(cctk.CTkFrame):
                             normalforeground='white', weekendbackground='#1a1a2e',
                             weekendforeground='#e94560', othermonthbackground='#111111',
                             othermonthforeground='#555555')
-        self.cal.pack(pady=10, padx=10, fill="both", expand=True)
+        self.cal.pack(pady=(35,10), padx=10, fill="both", expand=True)
+
+        # Logic for clicks
         self.cal.bind("<<CalendarSelected>>", self.handle_click)
 
-        self.info_lbl = cctk.CTkLabel(container, text="1. Toque fecha de INICIO", font=("Segoe UI", 11), text_color="#aaaaaa")
+        self.info_lbl = cctk.CTkLabel(container, text="1. Elija fecha de INICIO", font=("Segoe UI", 11), text_color="#aaaaaa")
         self.info_lbl.pack(pady=(0,10))
 
         self.selection_step = 0
         self.pop.focus_set()
 
-    def _check_close(self):
-        if not self.pop: return
-        try:
-            focused = self.pop.focus_get()
-            if not focused or not str(focused).startswith(str(self.pop)):
-                self.pop.destroy()
-                self.pop = None
-        except:
-            pass
+    def _safe_close(self):
+        if self.pop:
+            self.pop.grab_release()
+            self.pop.destroy()
+            self.pop = None
 
     def handle_click(self, event):
-        if not self.pop: return
-
         date_str = self.cal.get_date()
         date_obj = datetime.strptime(date_str, "%Y-%m-%d").date()
 
@@ -527,7 +526,7 @@ class FloatingRangePicker(cctk.CTkFrame):
             self.entry_start.insert(0, str(self.start_date))
             self.entry_end.delete(0, "end")
 
-            self.info_lbl.configure(text=f"2. Toque fecha de FIN", text_color="#ffff00")
+            self.info_lbl.configure(text=f"2. Elija fecha de FIN", text_color="#ffff00")
 
             self.cal.calevent_remove('all')
             self.cal.calevent_add(date_obj, 'Selección', 'range')
@@ -546,8 +545,8 @@ class FloatingRangePicker(cctk.CTkFrame):
             self.entry_end.delete(0, "end")
             self.entry_end.insert(0, str(self.end_date))
 
-            self.pop.destroy()
-            self.pop = None
+            # Selection finished
+            self._safe_close()
             self.selection_step = 0
 
 # ---------------------------
