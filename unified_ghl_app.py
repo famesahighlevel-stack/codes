@@ -8,12 +8,11 @@ import tkinter as tk
 from tkinter import messagebox
 import customtkinter as cctk
 from tkcalendar import Calendar
-from datetime import timedelta, datetime, timezone, time as dt_time, date as dt_date
+from datetime import timedelta, datetime, timezone, time as dt_time
 import pytz
 from openpyxl.styles import PatternFill, Font, Alignment
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from html import unescape
-import csv
 import os
 
 # ---------------------------
@@ -442,183 +441,147 @@ def fetch_for_account(acc, ghl_start, ghl_end, client_start, client_end, log_cal
     return r_opps, r_ventas
 
 # ---------------------------
-# Range Picker Dialog
+# Range Picker Component
 # ---------------------------
-class RangePicker(tk.Toplevel):
-    def __init__(self, parent, title, callback):
-        super().__init__(parent)
-        self.title(title)
-        self.geometry("400x450")
-        self.transient(parent)
-        self.grab_set()
-        self.callback = callback
-
+class RangePicker(cctk.CTkFrame):
+    def __init__(self, parent, title):
+        super().__init__(parent, corner_radius=20)
         self.start_date = None
         self.end_date = None
+        self.selected_dates = []
 
-        self.label = cctk.CTkLabel(self, text="Seleccione fecha de INICIO", font=cctk.CTkFont(size=14, weight="bold"))
-        self.label.pack(pady=10)
+        self.lbl = cctk.CTkLabel(self, text=title, font=("Segoe UI", 22, "bold"))
+        self.lbl.pack(anchor="w", padx=20, pady=(20,10))
 
-        self.cal = Calendar(self, selectmode='day', background='#0f3460', foreground='white',
-                            headersbackground='#16213e', headersforeground='white',
-                            selectbackground='#76933C', normalbackground='#ffffff',
-                            normalforeground='black', weekendbackground='#ffffff',
-                            weekendforeground='red', othermonthbackground='#f0f0f0',
-                            othermonthforeground='gray')
-        self.cal.pack(padx=20, pady=10, fill="both", expand=True)
-        self.cal.bind("<<CalendarSelected>>", self._on_date_selected)
+        self.range_btn = cctk.CTkButton(self, text="Seleccionar rango", height=42, corner_radius=12, font=("Segoe UI", 14), command=self.toggle_calendar)
+        self.range_btn.pack(padx=20, pady=(10,20), fill="x")
 
-        self.btn_confirm = cctk.CTkButton(self, text="Confirmar Rango", command=self._confirm, state="disabled")
-        self.btn_confirm.pack(pady=20)
+        self.cal_container = cctk.CTkFrame(self, fg_color="transparent")
+        # No pack initially
 
-    def _on_date_selected(self, event):
-        selected = self.cal.selection_get()
-        if not self.start_date or (self.start_date and self.end_date):
-            self.start_date = selected
-            self.end_date = None
-            self.label.configure(text=f"Inicio: {selected} - Seleccione FIN")
-            self.cal.calevent_remove('all')
-            self.cal.calevent_add(selected, 'Selección', 'range')
-            self.cal.tag_config('range', background='#76933C')
-            self.btn_confirm.configure(state="disabled")
+        self.cal = Calendar(self.cal_container, selectmode="day", date_pattern="yyyy-mm-dd")
+        self.cal.pack(pady=10, padx=20, fill="both", expand=True)
+
+        self.info = cctk.CTkLabel(self.cal_container, text="Selecciona inicio y luego final", font=("Segoe UI", 13))
+        self.info.pack(pady=5)
+
+        self.btn_select = cctk.CTkButton(self.cal_container, text="Confirmar Selección", command=self.select_date)
+        self.btn_select.pack(pady=10)
+
+        self.calendar_visible = False
+
+    def toggle_calendar(self):
+        if self.calendar_visible:
+            self.cal_container.pack_forget()
         else:
-            if selected < self.start_date:
-                self.end_date = self.start_date
-                self.start_date = selected
-            else:
-                self.end_date = selected
-
-            self.label.configure(text=f"Rango: {self.start_date} al {self.end_date}")
+            self.cal_container.pack(fill="x", pady=(0,10))
+            self.selected_dates = []
+            self.info.configure(text="Selecciona inicio y luego final")
             self.cal.calevent_remove('all')
-            curr = self.start_date
-            while curr <= self.end_date:
+        self.calendar_visible = not self.calendar_visible
+
+    def select_date(self):
+        date_str = self.cal.get_date()
+        date_obj = datetime.strptime(date_str, "%Y-%m-%d").date()
+
+        self.selected_dates.append(date_obj)
+
+        if len(self.selected_dates) == 1:
+            self.info.configure(text=f"Inicio: {date_str} - Seleccione Final")
+            self.cal.calevent_add(date_obj, 'Selección', 'range')
+            self.cal.tag_config('range', background='#76933C')
+        elif len(self.selected_dates) >= 2:
+            d1, d2 = self.selected_dates[0], self.selected_dates[-1]
+            if d1 > d2: d1, d2 = d2, d1
+
+            self.start_date, self.end_date = d1, d2
+            self.range_btn.configure(text=f"{self.start_date}  →  {self.end_date}")
+
+            # Pintar rango
+            self.cal.calevent_remove('all')
+            curr = d1
+            while curr <= d2:
                 self.cal.calevent_add(curr, 'Selección', 'range')
                 curr += timedelta(days=1)
             self.cal.tag_config('range', background='#76933C')
-            self.btn_confirm.configure(state="normal")
 
-    def _confirm(self):
-        self.callback(self.start_date, self.end_date)
-        self.destroy()
+            # Auto-close
+            time.sleep(0.3)
+            self.toggle_calendar()
 
 # ---------------------------
-# GUI (CustomTkinter)
+# APP
 # ---------------------------
-class GHLApp(cctk.CTk):
+class App(cctk.CTk):
     def __init__(self):
         super().__init__()
-        self.title("GHL Opportunity & Contact Master Pro")
-        self.geometry("900x800")
+        self.title("DUPAZA REPORT PRO")
+        self.geometry("1000x850")
         cctk.set_appearance_mode("dark")
-        cctk.set_default_color_theme("blue")
+        cctk.set_default_color_theme("green")
 
         self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(0, weight=1)
+        self.grid_rowconfigure(2, weight=1)
 
-        self.main_container = cctk.CTkFrame(self, corner_radius=20, fg_color="#1a1a2e")
-        self.main_container.grid(row=0, column=0, sticky="nsew", padx=20, pady=20)
-        self.main_container.grid_columnconfigure(0, weight=1)
-        self.main_container.grid_rowconfigure(2, weight=1)
+        # HEADER
+        header = cctk.CTkFrame(self, height=80, corner_radius=0)
+        header.grid(row=0, column=0, sticky="ew")
+        title = cctk.CTkLabel(header, text="📊 DUPAZA REPORT PRO", font=("Segoe UI", 28, "bold"))
+        title.pack(side="left", padx=25, pady=20)
 
-        self.header = cctk.CTkLabel(self.main_container, text="D U P A Z A   C R M",
-                                   font=cctk.CTkFont(family="Arial", size=32, weight="bold"), text_color="#00d2ff")
-        self.header.grid(row=0, column=0, padx=20, pady=(30, 5))
+        # BODY (Scrollable for the inline calendars)
+        self.scroll_body = cctk.CTkScrollableFrame(self, fg_color="transparent")
+        self.scroll_body.grid(row=1, column=0, sticky="nsew", padx=20, pady=20)
+        self.grid_rowconfigure(1, weight=1)
 
-        self.subheader = cctk.CTkLabel(self.main_container, text="Extractor Gold Edition: Oportunidades & Contactos",
-                                      font=cctk.CTkFont(size=14), text_color="#aaaaaa")
-        self.subheader.grid(row=1, column=0, padx=20, pady=(0, 20))
+        self.scroll_body.grid_columnconfigure((0,1), weight=1)
 
-        self.scrollable_frame = cctk.CTkFrame(self.main_container, fg_color="transparent")
-        self.scrollable_frame.grid(row=2, column=0, padx=40, pady=10, sticky="nsew")
-        self.scrollable_frame.grid_columnconfigure(0, weight=1)
+        # CONTACTOS
+        self.contacts_picker = RangePicker(self.scroll_body, "📇 CONTACTOS")
+        self.contacts_picker.grid(row=0, column=0, padx=10, sticky="nsew")
 
-        # --- SECCION OPORTUNIDADES ---
-        self.opp_frame = cctk.CTkFrame(self.scrollable_frame, fg_color="#16213e", corner_radius=10)
-        self.opp_frame.grid(row=0, column=0, padx=10, pady=10, sticky="ew")
-        self.opp_frame.grid_columnconfigure(0, weight=1)
+        # VENTAS (Oportunidades)
+        self.sales_picker = RangePicker(self.scroll_body, "💰 VENTAS")
+        self.sales_picker.grid(row=0, column=1, padx=10, sticky="nsew")
 
-        cctk.CTkLabel(self.opp_frame, text="OPORTUNIDADES / VENTAS", font=cctk.CTkFont(size=14, weight="bold"), text_color="#00d2ff").grid(row=0, column=0, pady=(10,5))
+        # GENERATE BUTTON
+        self.generate_btn = cctk.CTkButton(self, text="🚀 GENERAR EXCEL", height=45, width=220, font=("Segoe UI", 15, "bold"), corner_radius=14, command=self.start_process)
+        self.generate_btn.grid(row=2, column=0, pady=10)
 
-        self.opp_entry = cctk.CTkEntry(self.opp_frame, placeholder_text="Clic para seleccionar rango...", width=300, justify="center")
-        self.opp_entry.grid(row=1, column=0, pady=10, padx=20)
-        self.opp_entry.bind("<Button-1>", lambda e: self._pick_opp_range())
-        self.opp_entry.bind("<FocusIn>", lambda e: self._pick_opp_range())
-
-        self.opp_start = None
-        self.opp_end = None
-
-        # --- SECCION CONTACTOS ---
-        self.con_frame = cctk.CTkFrame(self.scrollable_frame, fg_color="#16213e", corner_radius=10)
-        self.con_frame.grid(row=1, column=0, padx=10, pady=10, sticky="ew")
-        self.con_frame.grid_columnconfigure(0, weight=1)
-
-        cctk.CTkLabel(self.con_frame, text="CONTACTOS (GUATEMALA)", font=cctk.CTkFont(size=14, weight="bold"), text_color="#00d2ff").grid(row=0, column=0, pady=(10,5))
-
-        self.con_entry = cctk.CTkEntry(self.con_frame, placeholder_text="Clic para seleccionar rango...", width=300, justify="center")
-        self.con_entry.grid(row=1, column=0, pady=10, padx=20)
-        self.con_entry.bind("<Button-1>", lambda e: self._pick_con_range())
-        self.con_entry.bind("<FocusIn>", lambda e: self._pick_con_range())
-
-        self.con_start = None
-        self.con_end = None
-
-        self.console = cctk.CTkTextbox(self.main_container, corner_radius=10, fg_color="#0f3460", border_width=1, border_color="#16213e",
-                                     font=("Consolas", 12), text_color="#e94560", height=150)
-        self.console.grid(row=3, column=0, padx=50, pady=10, sticky="ew")
-
-        self.progress = cctk.CTkProgressBar(self.main_container, height=15, progress_color="#00d2ff")
-        self.progress.grid(row=4, column=0, padx=50, pady=(0, 10), sticky="ew")
-        self.progress.set(0)
-
-        self.run_btn = cctk.CTkButton(self.main_container, text="G E N E R A R   R E P O R T E   U N I F I C A D O", command=self.start_thread,
-                                     height=55, corner_radius=10, font=cctk.CTkFont(size=18, weight="bold"),
-                                     fg_color="#76933C", hover_color="#5d7530")
-        self.run_btn.grid(row=5, column=0, padx=50, pady=(10, 30), sticky="ew")
+        # LOGS
+        logs_frame = cctk.CTkFrame(self, height=150, corner_radius=18)
+        logs_frame.grid(row=3, column=0, sticky="ew", padx=20, pady=(0,20))
+        cctk.CTkLabel(logs_frame, text="🖥️ ACTIVIDAD", font=("Segoe UI", 16, "bold")).pack(anchor="w", padx=15, pady=(10,5))
+        self.console = cctk.CTkTextbox(logs_frame, height=100, font=("Consolas", 12))
+        self.console.pack(fill="both", expand=True, padx=15, pady=(0,15))
 
         self.log("SISTEMA INICIADO. Seleccione los rangos de fecha.")
 
-    def _pick_opp_range(self):
-        RangePicker(self, "Rango de Oportunidades", self._set_opp_range)
-
-    def _set_opp_range(self, start, end):
-        self.opp_start = start
-        self.opp_end = end
-        self.opp_entry.delete(0, "end")
-        self.opp_entry.insert(0, f"{start} - {end}")
-
-    def _pick_con_range(self):
-        RangePicker(self, "Rango de Contactos", self._set_con_range)
-
-    def _set_con_range(self, start, end):
-        self.con_start = start
-        self.con_end = end
-        self.con_entry.delete(0, "end")
-        self.con_entry.insert(0, f"{start} - {end}")
-
-    def log(self, text):
+    def log(self, txt):
+        hour = datetime.now().strftime("%H:%M:%S")
         self.console.configure(state="normal")
-        self.console.insert("end", f" >> {text}\n")
+        self.console.insert("end", f"[{hour}] {txt}\n")
         self.console.see("end")
         self.console.configure(state="disabled")
 
-    def start_thread(self):
-        if not self.opp_start or not self.opp_end:
-            messagebox.showwarning("Atención", "Por favor seleccione el rango de fechas para Oportunidades.")
+    def start_process(self):
+        if not self.sales_picker.start_date or not self.sales_picker.end_date:
+            messagebox.showwarning("Atención", "Seleccione el rango de VENTAS.")
             return
-        if not self.con_start or not self.con_end:
-            messagebox.showwarning("Atención", "Por favor seleccione el rango de fechas para Contactos.")
+        if not self.contacts_picker.start_date or not self.contacts_picker.end_date:
+            messagebox.showwarning("Atención", "Seleccione el rango de CONTACTOS.")
             return
 
-        sd_opp_dt = datetime(self.opp_start.year, self.opp_start.month, self.opp_start.day)
-        ed_opp_dt = datetime(self.opp_end.year, self.opp_end.month, self.opp_end.day)
-        sd_con_dt = datetime(self.con_start.year, self.con_start.month, self.con_start.day)
-        ed_con_dt = datetime(self.con_end.year, self.con_end.month, self.con_end.day)
+        self.generate_btn.configure(state="disabled", text="🚀 PROCESANDO...")
+        threading.Thread(target=self.execute_logic, daemon=True).start()
 
-        self.run_btn.configure(state="disabled", text="P R O C E S A N D O . . .")
-        self.progress.set(0)
-        threading.Thread(target=self.execute, args=(sd_opp_dt, ed_opp_dt, sd_con_dt, ed_con_dt), daemon=True).start()
+    def execute_logic(self):
+        # Convert dates
+        sd_opp = datetime.combine(self.sales_picker.start_date, dt_time.min)
+        ed_opp = datetime.combine(self.sales_picker.end_date, dt_time.max)
+        sd_con = datetime.combine(self.contacts_picker.start_date, dt_time.min)
+        ed_con = datetime.combine(self.contacts_picker.end_date, dt_time.max)
 
-    def execute(self, sd_opp, ed_opp, sd_con, ed_con):
         s_iso_opp = sd_opp.strftime("%Y-%m-%d")
         e_iso_opp = ed_opp.strftime("%Y-%m-%d")
         ghl_start_opp = sd_opp.strftime("%Y-%m-%dT00:00:00.000Z")
@@ -626,38 +589,31 @@ class GHLApp(cctk.CTk):
 
         start_utc_con, end_utc_con = make_utc_range(sd_con, ed_con)
 
-        self.log(f"Iniciando extracción unificada.")
+        self.log("Iniciando extracción unificada...")
         res_o, res_v, res_c = [], [], []
 
         with ThreadPoolExecutor(max_workers=5) as ex:
-            futures_opp = {ex.submit(fetch_for_account, acc, ghl_start_opp, ghl_end_opp, s_iso_opp, e_iso_opp, self.log): acc for acc in ACCOUNTS}
-            futures_con = {ex.submit(fetch_contacts_for_account, acc, start_utc_con, end_utc_con, self.log): acc for acc in ACCOUNTS}
+            f_opp = {ex.submit(fetch_for_account, acc, ghl_start_opp, ghl_end_opp, s_iso_opp, e_iso_opp, self.log): acc for acc in ACCOUNTS}
+            f_con = {ex.submit(fetch_contacts_for_account, acc, start_utc_con, end_utc_con, self.log): acc for acc in ACCOUNTS}
 
-            total_tasks = len(futures_opp) + len(futures_con)
-            completed = 0
-
-            for f in as_completed(list(futures_opp.keys()) + list(futures_con.keys())):
+            for f in as_completed(list(f_opp.keys()) + list(f_con.keys())):
                 try:
-                    if f in futures_opp:
+                    if f in f_opp:
                         o, v = f.result()
                         res_o.extend(o); res_v.extend(v)
                     else:
                         c = f.result()
                         res_c.extend(c)
                 except Exception as e:
-                    acc_name = futures_opp.get(f, futures_con.get(f))["name"]
-                    self.log(f"Error en {acc_name}: {str(e)[:50]}")
-
-                completed += 1
-                self.after(0, lambda c=completed: self.progress.set(c / total_tasks))
+                    self.log(f"Error: {str(e)[:50]}")
 
         if res_o or res_c:
             self.generate_excel(res_o, res_v, res_c)
         else:
-            self.log("AVISO: No se encontraron registros.")
-            self.after(0, lambda: messagebox.showwarning("Atención", "No se encontraron datos."))
+            self.log("No se encontraron datos.")
+            messagebox.showwarning("Atención", "No se encontraron datos.")
 
-        self.after(0, lambda: self.run_btn.configure(state="normal", text="G E N E R A R   R E P O R T E   U N I F I C A D O"))
+        self.generate_btn.configure(state="normal", text="🚀 GENERAR EXCEL")
 
     def generate_excel(self, res_o, res_v, res_c):
         self.log("Compilando Excel...")
@@ -716,9 +672,9 @@ class GHLApp(cctk.CTk):
                     if current_fill:
                         for c in range(1, idx_bus + 1): ws_v.cell(row=r, column=c).fill = current_fill
 
-        self.log(f"¡EXITO! Archivo generado: {fn}")
-        self.after(0, lambda: messagebox.showinfo("Éxito", f"Reporte generado:\n{fn}"))
+        self.log(f"¡EXITO! Archivo: {fn}")
+        messagebox.showinfo("ÉXITO", f"Excel generado:\n{fn}")
 
 if __name__ == "__main__":
-    app = GHLApp()
+    app = App()
     app.mainloop()
