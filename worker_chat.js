@@ -210,7 +210,7 @@ async function moduloCatalogo(message, state, env) {
   const listado = await getProductList(env);
   const categorias = ["cama", "cocina", "ropero", "sofa", "comedor", "gavetero", "tocador", "cabecera", "mesita", "librera", "mesa", "trinchante", "platera", "mueble", "amueblado"];
   let catFound = categorias.find(c => m.includes(c));
-  let cat = catFound || state.ultima_categoria || "muebles";
+  let cat = catFound || state.ultima_categoria || null;
   let tamano = state.filtro_tamano;
   const mTamano = m.match(/\b(mediano|mediana|grande|pequeño|pequeña)\b/i);
   if (mTamano) {
@@ -219,6 +219,11 @@ async function moduloCatalogo(message, state, env) {
     state.filtro_tamano = tamano;
   }
   if (catFound) state.ultima_categoria = cat;
+
+  if (!cat) {
+    return { text: "Bienvenido. ¿En qué puedo ayudarle hoy? Contamos con variedad de:\n\n✨ CAMAS\n✨ COCINAS\n✨ ROPEROS\n✨ SALAS\n✨ COMEDORES\n✨ GAVETEROS\n\n¿Cuál le gustaría conocer? 😉" };
+  }
+
   if (!tamano) {
     const genero = (cat === "cama" || cat === "cocina" || cat === "sala" || cat === "mesa") ? "a" : "o";
     return { text: "¿Busca opciones de " + cat.toUpperCase() + " en tamaño " + (genero === "a" ? "mediana" : "mediano") + " o grande? 😉" };
@@ -250,72 +255,76 @@ async function moduloCatalogo(message, state, env) {
 
 // --- Flow Principal ---
 async function processFullFlow(message, state, env) {
-  const norm = normalizarTextoGlobal(message);
-  const pideFotos = /fotos?|imagenes?|verlo|verla|mostrar|enviame|fts/i.test(message);
-  const pideCompra = /\b(quiero comprar|lo quiero|la quiero|comprarlo|comprarla|quiero el pedido|hacer el pedido|quiero ordenar|proceder con la compra|donde deposito|metodo de pago|cuenta para depositar|como pago|pagar)\b/i.test(norm);
-  const pideInformacion = /(medida|dimension|precio|vale|cuesta|costo|valor|material|color|envio|flete|cuota|pago|informacion|detalle|fotos|verlo|verla|especificacion|garantia|resiste)/i.test(norm);
-  const pideCatalogo = /catalogo|modelos|opciones|variedad|otros|ver mas|muestreme|mostrame|muestreme mas|oferta|ofertas|otra|otras|venden|vende|que mas/i.test(norm);
-  const tieneCategoria = /cama|ropero|cocina|mueble|amueblado|comedor|mesa|gavetero|tocador|trinchante|platera|marquesa|cabecera|mesita|librera/i.test(norm);
-  const esAfirmacionGenerica = /^(ok|vale|esta bien|muy bien|si gracias|de acuerdo|perfecto|entendido|así es|esta ok|está ok|si|sii|por favor|porfavor|claro|envia|mandame)$/i.test(norm.trim());
-  const esSoloSaludo = /^(hola|buen|buena|buenas|tarde|dia|dias|noche|noches|buena tarde|buen dia|buenos dias|buenas noches|buenas tardes|\s)+$/i.test(norm.trim());
+  try {
+    const norm = normalizarTextoGlobal(message);
+    const pideFotos = /fotos?|imagenes?|verlo|verla|mostrar|enviame|fts/i.test(message);
+    const pideCompra = /\b(quiero comprar|lo quiero|la quiero|comprarlo|comprarla|quiero el pedido|hacer el pedido|quiero ordenar|proceder con la compra|donde deposito|metodo de pago|cuenta para depositar|como pago|pagar)\b/i.test(norm);
+    const pideInformacion = /(medida|dimension|precio|vale|cuesta|costo|valor|material|color|envio|flete|cuota|pago|informacion|detalle|fotos|verlo|verla|especificacion|garantia|resiste)/i.test(norm);
+    const pideCatalogo = /catalogo|modelos|opciones|variedad|otros|ver mas|muestreme|mostrame|muestreme mas|oferta|ofertas|otra|otras|venden|vende|que mas/i.test(norm);
+    const tieneCategoria = /cama|ropero|cocina|mueble|amueblado|comedor|mesa|gavetero|tocador|trinchante|platera|marquesa|cabecera|mesita|librera/i.test(norm);
+    const esAfirmacionGenerica = /^(ok|vale|esta bien|muy bien|si gracias|de acuerdo|perfecto|entendido|así es|esta ok|está ok|si|sii|por favor|porfavor|claro|envia|mandame)$/i.test(norm.trim());
+    const esSoloSaludo = /^(hola|buen|buena|buenas|tarde|dia|dias|noche|noches|buena tarde|buen dia|buenos dias|buenas noches|buenas tardes|\s)+$/i.test(norm.trim());
 
-  const currentEstado = state.estado_actual || "nuevo";
-  const yaEnvioMenu = state.menu_ayuda_enviado === "true";
-  const esPrimerMensaje = (currentEstado === "nuevo");
-  const prevProductoId = state.producto_id;
+    const currentEstado = state.estado_actual || "nuevo";
+    const yaEnvioMenu = state.menu_ayuda_enviado === "true";
+    const esPrimerMensaje = (currentEstado === "nuevo");
+    const prevProductoId = state.producto_id;
 
-  const carrito = state.carrito_json || [];
-  let targetProduct = null;
-  let esSeleccionReciente = false;
+    const carrito = state.carrito_json || [];
+    let targetProduct = null;
+    let esSeleccionReciente = false;
 
-  if (prevProductoId && (pideInformacion || esAfirmacionGenerica)) targetProduct = await obtenerProductoSeguro(prevProductoId, env);
-  if (!targetProduct) targetProduct = await buscarProductoPorCodigoEnMensaje(message, env);
-  if (!targetProduct) {
-    let selIdx = detectarSeleccionNatural(message, carrito);
-    if (selIdx !== null && carrito[selIdx]) {
-      const prodId = carrito[selIdx].key.split(":").pop();
-      targetProduct = await obtenerProductoSeguro(prodId, env);
-      if (targetProduct) esSeleccionReciente = true;
-    }
-  }
-  if (!targetProduct && prevProductoId) targetProduct = await obtenerProductoSeguro(prevProductoId, env);
-  if (!targetProduct && !pideCatalogo && !pideInformacion) targetProduct = await buscarProductoPorNombreEnMensaje(message, env);
-  if (targetProduct) state.producto_id = targetProduct.id;
-
-  let responseText, responseImgs = [], estadoPropuesto = currentEstado === "nuevo" ? "interaccion" : currentEstado;
-
-  if (targetProduct && !pideCatalogo) {
-    estadoPropuesto = pideCompra ? "cierre" : "producto";
-    const tituloProd = normalizarTextoGlobal(targetProduct.titulo || "");
-    const cats = ["cama", "cocina", "ropero", "sofa", "comedor", "gavetero", "tocador", "cabecera", "mesita", "librera", "mesa"];
-    let catProd = cats.find(c => tituloProd.includes(c)) || state.ultima_categoria;
-    if (catProd) state.ultima_categoria = catProd;
-
-    if (esSeleccionReciente || pideFotos) {
-      if (targetProduct.tipo === "combo" && Array.isArray(targetProduct.items) && targetProduct.items.length >= 3) {
-        responseImgs = [...new Set(targetProduct.items.map(item => item.imagen1 || item.imagen2 || item.imagen || item.url || item.link || item.link_publico).filter(url => typeof url === "string" && url.length > 10 && url.startsWith("http")))];
-      } else {
-        responseImgs = targetProduct.imagenes || [];
+    if (prevProductoId && (pideInformacion || esAfirmacionGenerica)) targetProduct = await obtenerProductoSeguro(prevProductoId, env);
+    if (!targetProduct) targetProduct = await buscarProductoPorCodigoEnMensaje(message, env);
+    if (!targetProduct) {
+      let selIdx = detectarSeleccionNatural(message, carrito);
+      if (selIdx !== null && carrito[selIdx]) {
+        const prodId = carrito[selIdx].key.split(":").pop();
+        targetProduct = await obtenerProductoSeguro(prodId, env);
+        if (targetProduct) esSeleccionReciente = true;
       }
     }
-    const coverage = await obtenerRespuestaCoverage(message, env);
-    const esNuevoProducto = targetProduct.id !== prevProductoId && !pideInformacion;
-    responseText = await callVendedorElitePro(message, env, targetProduct, pideCompra, coverage, esSoloSaludo, esPrimerMensaje, yaEnvioMenu, esNuevoProducto);
-    if ((esNuevoProducto || !yaEnvioMenu) && /Medidas|Colores|Materiales|Precios|Envío|Cuotas/i.test(responseText)) state.menu_ayuda_enviado = "true";
-  } else if ((pideCatalogo || tieneCategoria || /\b(mediano|mediana|grande|pequeño|pequeña)\b/i.test(norm)) && !pideInformacion) {
-    estadoPropuesto = "catalogo";
-    const resCat = await moduloCatalogo(message, state, env);
-    responseText = resCat.text;
-  } else {
-    const coverage = await obtenerRespuestaCoverage(message, env);
-    responseText = await callVendedorElitePro(message, env, targetProduct, pideCompra, coverage, esSoloSaludo, esPrimerMensaje, yaEnvioMenu, false);
-  }
+    if (!targetProduct && prevProductoId) targetProduct = await obtenerProductoSeguro(prevProductoId, env);
+    if (!targetProduct && !pideCatalogo && !pideInformacion) targetProduct = await buscarProductoPorNombreEnMensaje(message, env);
+    if (targetProduct) state.producto_id = targetProduct.id;
 
-  state.estado_actual = estadoPropuesto;
-  const caption = targetProduct ? (targetProduct.titulo || "").toUpperCase() : "";
-  let finalMsg = responseText;
-  if (caption && !responseText.toUpperCase().includes(caption)) finalMsg = "**" + caption + "**\n\n" + responseText;
-  return { text: finalMsg, images: responseImgs, state: state };
+    let responseText, responseImgs = [], estadoPropuesto = currentEstado === "nuevo" ? "interaccion" : currentEstado;
+
+    if (targetProduct && !pideCatalogo) {
+      estadoPropuesto = pideCompra ? "cierre" : "producto";
+      const tituloProd = normalizarTextoGlobal(targetProduct.titulo || "");
+      const cats = ["cama", "cocina", "ropero", "sofa", "comedor", "gavetero", "tocador", "cabecera", "mesita", "librera", "mesa"];
+      let catProd = cats.find(c => tituloProd.includes(c)) || state.ultima_categoria;
+      if (catProd) state.ultima_categoria = catProd;
+
+      if (esSeleccionReciente || pideFotos) {
+        if (targetProduct.tipo === "combo" && Array.isArray(targetProduct.items) && targetProduct.items.length >= 3) {
+          responseImgs = [...new Set(targetProduct.items.map(item => item.imagen1 || item.imagen2 || item.imagen || item.url || item.link || item.link_publico).filter(url => typeof url === "string" && url.length > 10 && url.startsWith("http")))];
+        } else {
+          responseImgs = targetProduct.imagenes || [];
+        }
+      }
+      const coverage = await obtenerRespuestaCoverage(message, env);
+      const esNuevoProducto = targetProduct.id !== prevProductoId && !pideInformacion;
+      responseText = await callVendedorElitePro(message, env, targetProduct, pideCompra, coverage, esSoloSaludo, esPrimerMensaje, yaEnvioMenu, esNuevoProducto);
+      if ((esNuevoProducto || !yaEnvioMenu) && /Medidas|Colores|Materiales|Precios|Envío|Cuotas/i.test(responseText)) state.menu_ayuda_enviado = "true";
+    } else if ((pideCatalogo || tieneCategoria || (esSoloSaludo && !state.ultima_categoria) || /\b(mediano|mediana|grande|pequeño|pequeña)\b/i.test(norm)) && !pideInformacion) {
+      estadoPropuesto = "catalogo";
+      const resCat = await moduloCatalogo(message, state, env);
+      responseText = resCat.text;
+    } else {
+      const coverage = await obtenerRespuestaCoverage(message, env);
+      responseText = await callVendedorElitePro(message, env, targetProduct, pideCompra, coverage, esSoloSaludo, esPrimerMensaje, yaEnvioMenu, false);
+    }
+
+    state.estado_actual = estadoPropuesto;
+    const caption = targetProduct ? (targetProduct.titulo || "").toUpperCase() : "";
+    let finalMsg = responseText;
+    if (caption && !responseText.toUpperCase().includes(caption)) finalMsg = "**" + caption + "**\n\n" + responseText;
+    return { text: finalMsg, images: responseImgs, state: state };
+  } catch (err) {
+    return { text: "Con gusto le ayudo. Permítame un momento para confirmarle la información exacta.", images: [], state: state };
+  }
 }
 
 // --- Interfaz HTML ---
@@ -361,8 +370,17 @@ const HTML = `
 
     <!-- Chat -->
     <main id="chat-box" class="flex-1 overflow-y-auto p-4 md:p-8 space-y-6 custom-scrollbar chat-container flex flex-col">
-        <div class="message-bot p-4 max-w-[85%] md:max-w-[70%] animate-fade-in shadow-md">
-            Hola 👋 Bienvenido a La Mueblería. ¿En qué puedo ayudarte hoy?
+        <div class="message-bot p-4 max-w-[85%] md:max-w-[70%] animate-fade-in shadow-md whitespace-pre-wrap">
+            Hola 👋 Bienvenido a La Mueblería. ¿En qué puedo ayudarle hoy? Contamos con variedad de:
+
+✨ CAMAS
+✨ COCINAS
+✨ ROPEROS
+✨ SALAS
+✨ COMEDORES
+✨ GAVETEROS
+
+¿Cuál le gustaría conocer? 😉
         </div>
     </main>
 
@@ -484,7 +502,7 @@ const HTML = `
                 }
             } catch (err) {
                 removeTyping();
-                appendMessage('Lo siento, ocurrió un error al procesar tu solicitud.', false);
+                appendMessage('Con gusto le ayudo. Permítame un momento para confirmarle la información exacta.', false);
             } finally {
                 input.disabled = false;
                 btn.disabled = false;
@@ -512,7 +530,7 @@ export default {
       return new Response(HTML, { headers: { "Content-Type": "text/html; charset=UTF-8" } });
     }
 
-    // POST /chat -> Procesar mensaje (Sin buffer interno, el cliente ya lo envió consolidado)
+    // POST /chat -> Procesar mensaje
     if (request.method === "POST" && url.pathname === "/chat") {
       const body = await request.json();
       const { message, state } = body;
