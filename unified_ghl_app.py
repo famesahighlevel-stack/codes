@@ -75,7 +75,7 @@ ACCOUNTS = [
         "primer_mensaje_cf": "uEKcNGLJvv7znfVJb2Z4"
     },
     {
-        "name": "R1.3",
+        "name": "riT0De9iiwhd84gSRco3",
         "location_id": "riT0De9iiwhd84gSRco3",
         "stage_id": "3b346e40-01ea-416e-98ff-60ee147aded1",
         "custom_field": "f310g4Z4A1OxHl3KYLRv",
@@ -356,11 +356,7 @@ def fetch_for_account(acc, ghl_start, ghl_end, client_start, client_end, log_cal
     u_map, cf_names, all_opps, page, limit = get_users_by_location(loc, token), get_custom_fields_map(loc, token), [], 1, 100
     url = "https://services.leadconnectorhq.com/opportunities/search"
     while True:
-        payload = {"locationId": loc, "page": page, "limit": limit, "filters": [{"group": "AND", "filters": [
-            {"field": "pipeline_stage_id", "operator": "eq", "value": stage},
-            {"field": "status", "operator": "eq", "value": "won"},
-            {"field": f"custom_fields.{cfield}", "operator": "range", "value": {"gte": ghl_start, "lte": ghl_end}}
-        ]}], "sort": [{"field": "date_added", "direction": "desc"}], "additionalDetails": {"notes": True}}
+        payload = {"locationId": loc, "page": page, "limit": limit, "filters": [{"group": "AND", "filters": [{"field": "pipeline_stage_id", "operator": "eq", "value": stage}, {"field": "status", "operator": "eq", "value": "won"}, {"field": f"custom_fields.{cfield}", "operator": "range", "value": {"gte": ghl_start, "lte": ghl_end}}]}], "sort": [{"field": "date_added", "direction": "desc"}], "additionalDetails": {"notes": True}}
         res = safe_post(url, token, payload, API_VERSION_OPPS)
         if not res or (isinstance(res, dict) and res.get("__error_status")): break
         opps = res.get("opportunities", [])
