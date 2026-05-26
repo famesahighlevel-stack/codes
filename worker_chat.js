@@ -176,6 +176,18 @@ async function buscarProductoPorCodigoEnMensaje(mensaje, env) {
 function detectarSeleccionNatural(mensaje, lista) {
   if (!Array.isArray(lista) || lista.length === 0) return null;
   const m = normalizarEntradaAvanzada(mensaje);
+
+  // 1. Detección por precio (Ej: "el de 2500" o "Q2500")
+  const matchPrecio = m.match(/\b(?:q|qt)?\s?(\d{3,5})\b/i);
+  if (matchPrecio) {
+      const precioMsg = parseInt(matchPrecio[1]);
+      const idxPrecio = lista.findIndex(p => {
+          const pProd = parseInt(p.precio?.toString().replace(/[^\d]/g, ""));
+          return pProd === precioMsg || (pProd > 0 && Math.abs(pProd - precioMsg) <= 10);
+      });
+      if (idxPrecio !== -1) return idxPrecio;
+  }
+
   if (/\b(medida|cuanto|precio|limpia|resiste|material|fotos|imagenes|color|garantia|dimension)\b/i.test(m)) return null;
   const mapa = { "primero": 0, "primer": 0, "uno": 0, "la 1": 0, "el 1": 0, "segundo": 1, "dos": 1, "la 2": 1, "el 2": 1, "tercero": 2, "tres": 2, "la 3": 2, "el 3": 2, "cuarto": 3, "cuatro": 3, "la 4": 3, "el 4": 3, "ultimo": lista.length - 1 };
   for (let key in mapa) { if (new RegExp("\\b" + key + "\\b", "i").test(m)) return mapa[key]; }
