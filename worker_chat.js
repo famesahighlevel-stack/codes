@@ -1,8 +1,10 @@
 /* =========================================================
    SISTEMA DE MUEBLERÍA IA - Versión Web Chat Autónoma
    - Basado en Versión Maestro Integrada (Final V5)
+   - Soporte para Plurales en Tamaños (Grandes, Medianos, etc.)
+   - Selección por Precio en Catálogo
    - Refinamiento de Catálogo: Búsqueda dinámica por especificaciones
-   - Cobertura Avanzada y Filtros de Tamaño por Categoría
+   - Cobertura Avanzada: Búsqueda por Departamento/Municipio
 ========================================================= */
 
 const ordenEstados = { nuevo: 0, catalogo: 1, producto: 2, precio: 3, objecion: 4, cierre: 5 };
@@ -52,7 +54,6 @@ async function obtenerRespuestaCoverage(texto, env, state) {
     const pideUbicacion = /(donde|ubica|envio|flete|entrega|cobertura|llegan|mandan|lugar|municipio|departamento|entregan)/i.test(m);
     if (pideUbicacion && !state.esperando_departamento) {
         state.esperando_departamento = true;
-        // Limpiamos el mensaje de palabras comunes para extraer el municipio potencial
         let munLimpio = m.replace(/(donde|ubica|envio|flete|entrega|cobertura|llegan|mandan|lugar|muebles|hacia|para|en|a|la|el|los|las|municipio|departamento|entregan|realizan|entrega)/gi, "").trim();
         state.municipio_pendiente = munLimpio;
         return "[PREGUNTAR_DEP] Lo siento, para ubicarle de mejor manera y brindarle la información de entrega exacta, ¿podría indicarme a qué departamento pertenece el lugar donde se encuentra? 😉";
@@ -69,16 +70,12 @@ async function obtenerRespuestaCoverage(texto, env, state) {
                 const municipios = depMun[depKey];
                 const munPendiente = state.municipio_pendiente ? normalizarTextoGlobal(state.municipio_pendiente) : "";
 
-                // Búsqueda inteligente de municipio dentro del departamento
                 let munReal = null;
                 if (munPendiente.length > 3) {
-                    // Primero búsqueda por inclusión total
                     munReal = municipios.find(mun => {
                         const nm = normalizarTextoGlobal(mun);
                         return munPendiente.includes(nm) || nm.includes(munPendiente);
                     });
-
-                    // Si no, búsqueda por fragmentos (ej: "san pedro carcha" -> "carcha")
                     if (!munReal) {
                         const partes = munPendiente.split(" ").filter(p => p.length > 3);
                         for (let p of partes) {
@@ -231,8 +228,11 @@ async function moduloCatalogo(message, state, env) {
   let catFound = categorias.find(c => m.includes(c));
   let cat = catFound || state.ultima_categoria || null;
   let tamano = state.filtro_tamano;
-  const mMediano = /\b(mediano|mediana|pequeño|pequeña|estandar|normal)\b/i.test(m);
-  const mGrande = /\b(grande|enorme|gigante|amplio|espacioso)\b/i.test(m);
+
+  // 1. Detección de tamaño con sinonimos avanzados (Soporta singular y plural)
+  const mMediano = /\b(mediano|mediana|medianos|medianas|pequeño|pequeña|pequeños|pequeñas|estandar|normal|normales)\b/i.test(m);
+  const mGrande = /\b(grande|grandes|enorme|enormes|gigante|gigantes|amplio|amplios|espacioso|espaciosos)\b/i.test(m);
+
   if (mMediano) tamano = "mediano"; else if (mGrande) tamano = "grande";
   if (tamano) state.filtro_tamano = tamano; if (catFound) state.ultima_categoria = cat;
   if (!cat) return { text: "Bienvenido. ¿En qué puedo ayudarle hoy? Contamos con variedad de:\n\n✨ CAMAS\n✨ COCINAS\n✨ ROPEROS\n✨ SALAS\n✨ COMEDORES\n✨ GAVETEROS\n\n¿Cuál le gustaría conocer? 😉" };
