@@ -41,17 +41,24 @@ async function obtenerRespuestaCoverage(texto, env, state) {
     const listadoRaw = await env.COVERAGE_DB.get("coverage:listado");
     const listado = JSON.parse(listadoRaw || "[]");
     const m = normalizarTextoGlobal(texto);
+
+    // 1. Intento de búsqueda directa por municipio
     for (const item of listado) {
       const u = normalizarTextoGlobal(item.ubicacion);
       if (u.length > 3 && m.includes(u)) return item.respuesta;
     }
-    const pideUbicacion = /(donde|ubica|envio|flete|entrega|cobertura|llegan|mandan|lugar|municipio|departamento)/i.test(m);
+
+    // 2. Si no hay match directo y es una pregunta de cobertura, pedimos departamento
+    const pideUbicacion = /(donde|ubica|envio|flete|entrega|cobertura|llegan|mandan|lugar|municipio|departamento|entregan)/i.test(m);
     if (pideUbicacion && !state.esperando_departamento) {
         state.esperando_departamento = true;
-        const palabras = m.split(" ").filter(p => p.length > 4 && !/(envio|entrega|cobertura|muebles|donde|hacia|para)/.test(p));
-        state.municipio_pendiente = palabras[0] || "";
+        // Limpiamos el mensaje de palabras comunes para extraer el municipio potencial
+        let munLimpio = m.replace(/(donde|ubica|envio|flete|entrega|cobertura|llegan|mandan|lugar|muebles|hacia|para|en|a|la|el|los|las|municipio|departamento|entregan|realizan|entrega)/gi, "").trim();
+        state.municipio_pendiente = munLimpio;
         return "[PREGUNTAR_DEP] Lo siento, para ubicarle de mejor manera y brindarle la información de entrega exacta, ¿podría indicarme a qué departamento pertenece el lugar donde se encuentra? 😉";
     }
+
+    // 3. Si estábamos esperando el departamento
     if (state.esperando_departamento) {
         const depInput = m;
         const depMunRaw = await env.COVERAGE_DB.get("listado:depmun");
@@ -61,20 +68,38 @@ async function obtenerRespuestaCoverage(texto, env, state) {
             if (depKey) {
                 const municipios = depMun[depKey];
                 const munPendiente = state.municipio_pendiente ? normalizarTextoGlobal(state.municipio_pendiente) : "";
-                let munReal = municipios.find(mun => {
-                    const nm = normalizarTextoGlobal(mun);
-                    return nm.includes(munPendiente) || (munPendiente.length > 4 && nm.includes(munPendiente.substring(0, 5)));
-                });
+
+                // Búsqueda inteligente de municipio dentro del departamento
+                let munReal = null;
+                if (munPendiente.length > 3) {
+                    // Primero búsqueda por inclusión total
+                    munReal = municipios.find(mun => {
+                        const nm = normalizarTextoGlobal(mun);
+                        return munPendiente.includes(nm) || nm.includes(munPendiente);
+                    });
+
+                    // Si no, búsqueda por fragmentos (ej: "san pedro carcha" -> "carcha")
+                    if (!munReal) {
+                        const partes = munPendiente.split(" ").filter(p => p.length > 3);
+                        for (let p of partes) {
+                            munReal = municipios.find(mun => normalizarTextoGlobal(mun).includes(p));
+                            if (munReal) break;
+                        }
+                    }
+                }
+
                 if (munReal) {
                     const resFinal = await env.COVERAGE_DB.get("coverage:" + normalizarTextoGlobal(munReal), { type: "json" });
                     state.esperando_departamento = false;
                     state.municipio_pendiente = null;
                     if (resFinal && resFinal.respuesta) return resFinal.respuesta;
                 }
+
                 const resDep = await env.COVERAGE_DB.get("coverage:" + normalizarTextoGlobal(depKey), { type: "json" });
                 state.esperando_departamento = false;
                 state.municipio_pendiente = null;
                 if (resDep && resDep.respuesta) return resDep.respuesta;
+
                 return "Perfecto, en " + depKey.toUpperCase() + " realizamos entregas. ¿Le gustaría que coticemos el envío de algún mueble en específico? 😉";
             }
         }
@@ -202,16 +227,10 @@ async function moduloCatalogo(message, state, env) {
   if (!tamano) { const genero = (cat === "cama" || cat === "cocina" || cat === "sala" || cat === "mesa") ? "a" : "o"; return { text: "¿Busca opciones de " + cat.toUpperCase() + " en tamaño " + (genero === "a" ? "mediana" : "mediano") + " o grande? 😉" }; }
 
   // --- REFINAMIENTO DINÁMICO ---
-  // Extraemos palabras clave adicionales del mensaje del usuario (especificaciones)
   const ignorar = ["mediano", "grande", "pequeño", "otros", "opciones", "combos", "promociones", "muestreme", "mas", "cama", "cocina", "ropero", "sala", "comedor", "mueble", "amueblado"];
   const specs = m.split(/\s+/).filter(word => word.length >= 4 && !ignorar.includes(word));
-
   const filteredList = (cat === "muebles") ? listado : listado.filter(p => normalizarTextoGlobal(p.nombre || p.titulo).includes(cat));
-  const combos = filteredList.filter(p => {
-    const key = (p.key || "").toLowerCase(); const name = (p.nombre || p.titulo || "").toLowerCase();
-    return key.includes("combo") || name.includes("combo") || name.includes("amueblado");
-  });
-
+  const combos = filteredList.filter(p => { const key = (p.key || "").toLowerCase(); const name = (p.nombre || p.titulo || "").toLowerCase(); return key.includes("combo") || name.includes("combo") || name.includes("amueblado"); });
   let resultados = [];
   if (cat === "cama") {
       if (tamano === "mediano") resultados = combos.filter(p => { const t = normalizarTextoGlobal(p.nombre || p.titulo || ""); return t.includes("matri") || t.includes("queen"); });
@@ -223,35 +242,21 @@ async function moduloCatalogo(message, state, env) {
       if (tamano === "mediano") resultados = combos.filter(p => (parseFloat(p.precio) || 0) <= 5000);
       else resultados = combos.filter(p => (parseFloat(p.precio) || 0) > 5000);
   }
-
-  // Aplicar refinamiento por especificaciones (ej: "fenix", "titan", "3 puertas")
   if (specs.length > 0) {
-      const refinados = resultados.filter(p => {
-          const t = normalizarTextoGlobal((p.nombre || p.titulo || "") + " " + (p.sku || "") + " " + (p.key || ""));
-          return specs.some(s => t.includes(s));
-      });
+      const refinados = resultados.filter(p => { const t = normalizarTextoGlobal((p.nombre || p.titulo || "") + " " + (p.sku || "") + " " + (p.key || "")); return specs.some(s => t.includes(s)); });
       if (refinados.length > 0) resultados = refinados;
   }
-
-  // Rotación de resultados si pide "otros"
   if (m.includes("otro") || m.includes("variedad") || m.includes("mas")) {
-      const offset = (state.catalogo_offset || 0) + 4;
-      state.catalogo_offset = offset >= resultados.length ? 0 : offset;
-      resultados = resultados.slice(state.catalogo_offset);
-  } else {
-      state.catalogo_offset = 0;
-  }
-
+      const offset = (state.catalogo_offset || 0) + 4; state.catalogo_offset = offset >= resultados.length ? 0 : offset; resultados = resultados.slice(state.catalogo_offset);
+  } else { state.catalogo_offset = 0; }
   let preMsg = "";
   if (resultados.length === 0 && tamano) { preMsg = "Por el momento no tengo más opciones de " + cat.toUpperCase() + " con esas características, pero aquí le muestro lo que tenemos disponible:\n\n"; resultados = combos; }
   resultados = resultados.slice(0, 4);
   if (resultados.length === 0) return { text: "Lo siento, no encontré opciones de " + cat.toUpperCase() + " disponibles en este momento con esas especificaciones. 😉" };
-
   state.carrito_json = resultados.map(p => ({ key: p.key, nombre: p.nombre || p.titulo, precio: p.precio }));
   let resp = preMsg || ("Aquí tiene opciones de " + cat.toUpperCase() + (tamano ? " " + tamano.toUpperCase() : "") + "S disponibles:\n\n");
   resultados.forEach((p, i) => { resp += (i + 1) + ". " + (p.nombre || p.titulo).toUpperCase() + " - Q" + p.precio + "\n"; });
-  resp += "\n¿Cuál le gustaría conocer a detalle? 😉";
-  return { text: resp };
+  resp += "\n¿Cuál le gustaría conocer a detalle? 😉"; return { text: resp };
 }
 
 // --- Flow Principal ---
@@ -268,45 +273,28 @@ async function processFullFlow(message, state, env) {
     const currentEstado = state.estado_actual || "nuevo";
     const yaEnvioMenu = state.menu_ayuda_enviado === "true";
     const esPrimerMensaje = (currentEstado === "nuevo");
-    const prevProductoId = state.producto_id;
-    const carrito = state.carrito_json || [];
+    const prevProductoId = state.producto_id; const carrito = state.carrito_json || [];
     let targetProduct = null; let esSeleccionReciente = false;
 
     const respCoverage = await obtenerRespuestaCoverage(message, env, state);
     if (respCoverage) { if (respCoverage.includes("[PREGUNTAR_DEP]")) return { text: respCoverage.replace("[PREGUNTAR_DEP]", ""), images: [], state: state }; return { text: respCoverage, images: [], state: state }; }
 
-    // Detección de selección en carrito
     let selIdx = detectarSeleccionNatural(message, carrito);
-    if (selIdx !== null && carrito[selIdx]) {
-        const prodId = carrito[selIdx].key.split(":").pop();
-        targetProduct = await obtenerProductoSeguro(prodId, env);
-        if (targetProduct) esSeleccionReciente = true;
-    }
-
-    // Si está en catálogo y pide "otros" o da especificaciones, REFINAMOS
-    if (currentEstado === "catalogo" && !targetProduct && !pideInformacion && (pideCatalogo || norm.length > 4)) {
-        const resCat = await moduloCatalogo(message, state, env);
-        return { text: resCat.text, images: [], state: state };
-    }
-
+    if (selIdx !== null && carrito[selIdx]) { const prodId = carrito[selIdx].key.split(":").pop(); targetProduct = await obtenerProductoSeguro(prodId, env); if (targetProduct) esSeleccionReciente = true; }
+    if (currentEstado === "catalogo" && !targetProduct && !pideInformacion && (pideCatalogo || norm.length > 4)) { const resCat = await moduloCatalogo(message, state, env); return { text: resCat.text, images: [], state: state }; }
     if (!targetProduct) {
         if (prevProductoId && (pideInformacion || esAfirmacionGenerica)) targetProduct = await obtenerProductoSeguro(prevProductoId, env);
         if (!targetProduct) targetProduct = await buscarProductoPorCodigoEnMensaje(message, env);
         if (!targetProduct && prevProductoId) targetProduct = await obtenerProductoSeguro(prevProductoId, env);
         if (!targetProduct && !pideCatalogo && !pideInformacion) targetProduct = await buscarProductoPorNombreEnMensaje(message, env);
     }
-
     if (targetProduct) state.producto_id = targetProduct.id;
     let responseText, responseImgs = [], estadoPropuesto = currentEstado === "nuevo" ? "interaccion" : currentEstado;
-
     if (targetProduct && !pideCatalogo) {
       estadoPropuesto = pideCompra ? "cierre" : "producto";
       const tituloProd = normalizarTextoGlobal(targetProduct.titulo || ""); const cats = ["cama", "cocina", "ropero", "sofa", "comedor", "gavetero", "tocador", "cabecera", "mesita", "librera", "mesa"];
       let catProd = cats.find(c => tituloProd.includes(c)) || state.ultima_categoria; if (catProd) state.ultima_categoria = catProd;
-      if (esSeleccionReciente || pideFotos) {
-        if (targetProduct.tipo === "combo" && Array.isArray(targetProduct.items) && targetProduct.items.length >= 3) responseImgs = [...new Set(targetProduct.items.map(item => item.imagen1 || item.imagen2 || item.imagen || item.url || item.link || item.link_publico).filter(url => typeof url === "string" && url.length > 10 && url.startsWith("http")))];
-        else responseImgs = targetProduct.imagenes || [];
-      }
+      if (esSeleccionReciente || pideFotos) { if (targetProduct.tipo === "combo" && Array.isArray(targetProduct.items) && targetProduct.items.length >= 3) responseImgs = [...new Set(targetProduct.items.map(item => item.imagen1 || item.imagen2 || item.imagen || item.url || item.link || item.link_publico).filter(url => typeof url === "string" && url.length > 10 && url.startsWith("http")))]; else responseImgs = targetProduct.imagenes || []; }
       const coverage = await obtenerRespuestaCoverage(message, env, state); const esNuevoProducto = targetProduct.id !== prevProductoId && !pideInformacion;
       responseText = await callVendedorElitePro(message, env, targetProduct, pideCompra, coverage, esSoloSaludo, esPrimerMensaje, yaEnvioMenu, esNuevoProducto);
       if ((esNuevoProducto || !yaEnvioMenu) && /Medidas|Colores|Materiales|Precios|Envío|Cuotas/i.test(responseText)) state.menu_ayuda_enviado = "true";
@@ -315,7 +303,6 @@ async function processFullFlow(message, state, env) {
     } else {
       const coverage = await obtenerRespuestaCoverage(message, env, state); responseText = await callVendedorElitePro(message, env, targetProduct, pideCompra, coverage, esSoloSaludo, esPrimerMensaje, yaEnvioMenu, false);
     }
-
     state.estado_actual = estadoPropuesto; const caption = targetProduct ? (targetProduct.titulo || "").toUpperCase() : ""; let finalMsg = responseText;
     if (caption && !responseText.toUpperCase().includes(caption)) finalMsg = "**" + caption + "**\n\n" + responseText;
     return { text: finalMsg, images: responseImgs, state: state };
@@ -383,24 +370,15 @@ const HTML = `
         function getChatState() { return JSON.parse(sessionStorage.getItem('chat_state') || '{}'); }
         function saveChatState(state) { sessionStorage.setItem('chat_state', JSON.stringify(state)); }
         function appendMessage(text, isUser, images = []) {
-            const chatBox = document.getElementById('chat-box');
-            const div = document.createElement('div');
-            div.className = (isUser ? 'message-user' : 'message-bot') + ' p-4 max-w-[85%] md:max-w-[70%] shadow-md whitespace-pre-wrap';
-            let content = text.replace(/\\*\\*(.*?)\\*\\*/g, '<strong>$1</strong>'); div.innerHTML = content;
-            if (images && images.length > 0) {
-                const imgGrid = document.createElement('div'); imgGrid.className = 'grid grid-cols-1 sm:grid-cols-2 gap-2 mt-3';
-                images.forEach(url => { const img = document.createElement('img'); img.src = url; img.className = 'rounded-lg w-full h-48 object-cover cursor-pointer hover:opacity-90 transition-opacity'; img.onclick = () => window.open(url, '_blank'); imgGrid.appendChild(img); });
-                div.appendChild(imgGrid);
-            }
+            const chatBox = document.getElementById('chat-box'); const div = document.createElement('div'); div.className = (isUser ? 'message-user' : 'message-bot') + ' p-4 max-w-[85%] md:max-w-[70%] shadow-md whitespace-pre-wrap'; let content = text.replace(/\\*\\*(.*?)\\*\\*/g, '<strong>$1</strong>'); div.innerHTML = content;
+            if (images && images.length > 0) { const imgGrid = document.createElement('div'); imgGrid.className = 'grid grid-cols-1 sm:grid-cols-2 gap-2 mt-3'; images.forEach(url => { const img = document.createElement('img'); img.src = url; img.className = 'rounded-lg w-full h-48 object-cover cursor-pointer hover:opacity-90 transition-opacity'; img.onclick = () => window.open(url, '_blank'); imgGrid.appendChild(img); }); div.appendChild(imgGrid); }
             chatBox.appendChild(div); chatBox.scrollTop = chatBox.scrollHeight;
         }
         function showTyping() { if (document.getElementById('typing-indicator')) return; const chatBox = document.getElementById('chat-box'); const div = document.createElement('div'); div.id = 'typing-indicator'; div.className = 'message-bot p-4 flex gap-1 items-center'; div.innerHTML = '<div class="typing-indicator"><span></span><span></span><span></span></div>'; chatBox.appendChild(div); chatBox.scrollTop = chatBox.scrollHeight; }
         function removeTyping() { const el = document.getElementById('typing-indicator'); if (el) el.remove(); }
         function handleInput() { const input = document.getElementById('user-input'); const msg = input.value.trim(); if (!msg) return; input.value = ''; appendMessage(msg, true); pendingMessages.push(msg); showTyping(); if (bufferTimeout) clearTimeout(bufferTimeout); bufferTimeout = setTimeout(() => { sendConsolidatedMessage(); }, 2500); }
         async function sendConsolidatedMessage() {
-            const input = document.getElementById('user-input'); const btn = document.getElementById('send-btn');
-            const fullMessage = pendingMessages.join(' '); pendingMessages = []; bufferTimeout = null;
-            input.disabled = true; btn.disabled = true; btn.classList.add('opacity-50');
+            const input = document.getElementById('user-input'); const btn = document.getElementById('send-btn'); const fullMessage = pendingMessages.join(' '); pendingMessages = []; bufferTimeout = null; input.disabled = true; btn.disabled = true; btn.classList.add('opacity-50');
             try {
                 const response = await fetch('/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: fullMessage, sessionId: sessionId, state: getChatState() }) });
                 const data = await response.json(); removeTyping(); if (data.text) { appendMessage(data.text, false, data.images); saveChatState(data.state); }
@@ -418,8 +396,7 @@ export default {
     const url = new URL(request.url);
     if (request.method === "GET" && url.pathname === "/") return new Response(HTML, { headers: { "Content-Type": "text/html; charset=UTF-8" } });
     if (request.method === "POST" && url.pathname === "/chat") {
-      const body = await request.json();
-      const result = await processFullFlow(body.message, body.state || {}, env);
+      const body = await request.json(); const result = await processFullFlow(body.message, body.state || {}, env);
       return new Response(JSON.stringify(result), { headers: { "Content-Type": "application/json" } });
     }
     return new Response("Not Found", { status: 404 });
