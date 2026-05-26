@@ -1,10 +1,9 @@
 /* =========================================================
    SISTEMA DE MUEBLERÍA IA - Versión Web Chat Autónoma
    - Basado en Versión Maestro Integrada (Final V5)
-   - Sin dependencias de GoHighLevel / WhatsApp
-   - Interfaz Web ChatGPT-style incluida
-   - Persistencia de estado en SessionStorage (solo sesión abierta)
-   - Buffer de 2.5s optimizado (Client-side debouncing)
+   - Cobertura Avanzada: Búsqueda por Departamento/Municipio
+   - Filtros de Tamaño: Cama (King/Matri/Queen), Roperos/Cocinas (Precio)
+   - Sinonimia Avanzada y Persistencia en SessionStorage
 ========================================================= */
 
 const ordenEstados = { nuevo: 0, catalogo: 1, producto: 2, precio: 3, objecion: 4, cierre: 5 };
@@ -38,15 +37,65 @@ async function getProductList(env) {
   } catch (e) { return []; }
 }
 
-async function obtenerRespuestaCoverage(texto, env) {
+async function obtenerRespuestaCoverage(texto, env, state) {
   try {
     const listadoRaw = await env.COVERAGE_DB.get("coverage:listado");
     const listado = JSON.parse(listadoRaw || "[]");
     const m = normalizarTextoGlobal(texto);
+
+    // 1. Intento de búsqueda directa por municipio
     for (const item of listado) {
       const u = normalizarTextoGlobal(item.ubicacion);
       if (u.length > 3 && m.includes(u)) return item.respuesta;
     }
+
+    // 2. Si no hay match directo y es una pregunta de cobertura, pedimos departamento
+    const pideUbicacion = /(donde|ubica|envio|flete|entrega|cobertura|llegan|mandan|lugar|municipio|departamento)/i.test(m);
+    if (pideUbicacion && !state.esperando_departamento) {
+        state.esperando_departamento = true;
+        // Intentamos extraer una palabra que parezca municipio para guardarla
+        const palabras = m.split(" ").filter(p => p.length > 4 && !/(envio|entrega|cobertura|muebles|donde|hacia|para)/.test(p));
+        state.municipio_pendiente = palabras[0] || "";
+        return "[PREGUNTAR_DEP] Lo siento, para ubicarle de mejor manera y brindarle la información de entrega exacta, ¿podría indicarme a qué departamento pertenece el lugar donde se encuentra? 😉";
+    }
+
+    // 3. Si estábamos esperando el departamento
+    if (state.esperando_departamento) {
+        const depInput = m;
+        const depMunRaw = await env.COVERAGE_DB.get("listado:depmun");
+        if (depMunRaw) {
+            const depMun = JSON.parse(depMunRaw);
+            // Buscar departamento exacto o por inclusión
+            let depKey = Object.keys(depMun).find(d => depInput.includes(normalizarTextoGlobal(d)));
+            if (depKey) {
+                const municipios = depMun[depKey];
+                const munPendiente = state.municipio_pendiente ? normalizarTextoGlobal(state.municipio_pendiente) : "";
+
+                // Buscar municipio pendiente dentro de la lista del departamento
+                let munReal = municipios.find(mun => {
+                    const nm = normalizarTextoGlobal(mun);
+                    return nm.includes(munPendiente) || (munPendiente.length > 4 && nm.includes(munPendiente.substring(0, 5)));
+                });
+
+                if (munReal) {
+                    const resFinal = await env.COVERAGE_DB.get("coverage:" + normalizarTextoGlobal(munReal), { type: "json" });
+                    state.esperando_departamento = false;
+                    state.municipio_pendiente = null;
+                    if (resFinal && resFinal.respuesta) return resFinal.respuesta;
+                }
+
+                // Si no encontramos el municipio específico pero tenemos el departamento, damos una respuesta genérica del departamento si existe
+                const resDep = await env.COVERAGE_DB.get("coverage:" + normalizarTextoGlobal(depKey), { type: "json" });
+                state.esperando_departamento = false;
+                state.municipio_pendiente = null;
+                if (resDep && resDep.respuesta) return resDep.respuesta;
+
+                return "Perfecto, en " + depKey.toUpperCase() + " realizamos entregas. ¿Le gustaría que coticemos el envío de algún mueble en específico? 😉";
+            }
+        }
+        state.esperando_departamento = false; // Reset si no se entiende el depto
+    }
+
   } catch (e) {}
   return null;
 }
@@ -212,12 +261,15 @@ async function moduloCatalogo(message, state, env) {
   let catFound = categorias.find(c => m.includes(c));
   let cat = catFound || state.ultima_categoria || null;
   let tamano = state.filtro_tamano;
-  const mTamano = m.match(/\b(mediano|mediana|grande|pequeño|pequeña)\b/i);
-  if (mTamano) {
-    const matched = mTamano[1].toLowerCase();
-    tamano = (matched.startsWith("median") || matched.startsWith("peque")) ? "mediano" : "grande";
-    state.filtro_tamano = tamano;
-  }
+
+  // 1. Detección de tamaño con sinonimos avanzados
+  const mMediano = /\b(mediano|mediana|pequeño|pequeña|estandar|normal)\b/i.test(m);
+  const mGrande = /\b(grande|enorme|gigante|amplio|espacioso)\b/i.test(m);
+
+  if (mMediano) tamano = "mediano";
+  else if (mGrande) tamano = "grande";
+
+  if (tamano) state.filtro_tamano = tamano;
   if (catFound) state.ultima_categoria = cat;
 
   if (!cat) {
@@ -228,14 +280,34 @@ async function moduloCatalogo(message, state, env) {
     const genero = (cat === "cama" || cat === "cocina" || cat === "sala" || cat === "mesa") ? "a" : "o";
     return { text: "¿Busca opciones de " + cat.toUpperCase() + " en tamaño " + (genero === "a" ? "mediana" : "mediano") + " o grande? 😉" };
   }
+
+  // 2. Filtrado avanzado por Categoría y Tamaño
   const filteredList = (cat === "muebles") ? listado : listado.filter(p => normalizarTextoGlobal(p.nombre || p.titulo).includes(cat));
   const combos = filteredList.filter(p => {
     const key = (p.key || "").toLowerCase(); const name = (p.nombre || p.titulo || "").toLowerCase();
     return key.includes("combo") || name.includes("combo") || name.includes("amueblado");
   });
-  let resultados = combos;
-  if (tamano === "mediano") resultados = combos.filter(p => (parseFloat(p.precio) || 0) <= 5000);
-  else if (tamano === "grande") resultados = combos.filter(p => (parseFloat(p.precio) || 0) > 5000);
+
+  let resultados = [];
+  if (cat === "cama") {
+      // Cama: Mediano = matri/queen, Grande = king
+      if (tamano === "mediano") {
+          resultados = combos.filter(p => {
+              const t = normalizarTextoGlobal(p.nombre || p.titulo || "");
+              return t.includes("matri") || t.includes("queen");
+          });
+      } else {
+          resultados = combos.filter(p => normalizarTextoGlobal(p.nombre || p.titulo || "").includes("king"));
+      }
+  } else if (cat === "ropero" || cat === "cocina") {
+      // Roperos/Cocinas: Mediano <= 3499, Grande >= 3500
+      if (tamano === "mediano") resultados = combos.filter(p => (parseFloat(p.precio) || 0) <= 3499);
+      else resultados = combos.filter(p => (parseFloat(p.precio) || 0) >= 3500);
+  } else {
+      // General (otros muebles): Base 5000 como antes
+      if (tamano === "mediano") resultados = combos.filter(p => (parseFloat(p.precio) || 0) <= 5000);
+      else resultados = combos.filter(p => (parseFloat(p.precio) || 0) > 5000);
+  }
 
   let preMsg = "";
   if (resultados.length === 0 && tamano) {
@@ -274,6 +346,15 @@ async function processFullFlow(message, state, env) {
     let targetProduct = null;
     let esSeleccionReciente = false;
 
+    // 1. Manejo de Cobertura / Envíos (Avanzado)
+    const respCoverage = await obtenerRespuestaCoverage(message, env, state);
+    if (respCoverage) {
+        if (respCoverage.includes("[PREGUNTAR_DEP]")) {
+            return { text: respCoverage.replace("[PREGUNTAR_DEP]", ""), images: [], state: state };
+        }
+        return { text: respCoverage, images: [], state: state };
+    }
+
     if (prevProductoId && (pideInformacion || esAfirmacionGenerica)) targetProduct = await obtenerProductoSeguro(prevProductoId, env);
     if (!targetProduct) targetProduct = await buscarProductoPorCodigoEnMensaje(message, env);
     if (!targetProduct) {
@@ -304,16 +385,16 @@ async function processFullFlow(message, state, env) {
           responseImgs = targetProduct.imagenes || [];
         }
       }
-      const coverage = await obtenerRespuestaCoverage(message, env);
+      const coverage = await obtenerRespuestaCoverage(message, env, state);
       const esNuevoProducto = targetProduct.id !== prevProductoId && !pideInformacion;
       responseText = await callVendedorElitePro(message, env, targetProduct, pideCompra, coverage, esSoloSaludo, esPrimerMensaje, yaEnvioMenu, esNuevoProducto);
       if ((esNuevoProducto || !yaEnvioMenu) && /Medidas|Colores|Materiales|Precios|Envío|Cuotas/i.test(responseText)) state.menu_ayuda_enviado = "true";
-    } else if ((pideCatalogo || tieneCategoria || (esSoloSaludo && !state.ultima_categoria) || /\b(mediano|mediana|grande|pequeño|pequeña)\b/i.test(norm)) && !pideInformacion) {
+    } else if ((pideCatalogo || tieneCategoria || (esSoloSaludo && !state.ultima_categoria) || /\b(mediano|mediana|grande|pequeño|pequeña|enorme|gigante)\b/i.test(norm)) && !pideInformacion) {
       estadoPropuesto = "catalogo";
       const resCat = await moduloCatalogo(message, state, env);
       responseText = resCat.text;
     } else {
-      const coverage = await obtenerRespuestaCoverage(message, env);
+      const coverage = await obtenerRespuestaCoverage(message, env, state);
       responseText = await callVendedorElitePro(message, env, targetProduct, pideCompra, coverage, esSoloSaludo, esPrimerMensaje, yaEnvioMenu, false);
     }
 
