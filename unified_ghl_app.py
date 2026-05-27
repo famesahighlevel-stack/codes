@@ -440,7 +440,7 @@ def fetch_contacts_for_account(acc, start_utc, end_utc, log_callback):
 def fetch_for_account(acc, ghl_start, ghl_end, client_start, client_end, log_callback):
     token, loc, stage, cfield, dv_id, acc_name = acc["token"], acc["location_id"], acc["stage_id"], acc["custom_field"], acc["dataventa_id"], acc["name"]
     log_callback(f"Extraer Ventas: {acc_name}...")
-    u_map = get_users_by_location(loc, token)
+    u_map = get_users_by_location(loc, token, version=API_VERSION_CONTACTS)
     cf_names = get_custom_fields_map(loc, token)
     all_opps, page, limit = [], 1, 100
     url = "https://services.leadconnectorhq.com/opportunities/search"
@@ -491,6 +491,7 @@ def fetch_for_account(acc, ghl_start, ghl_end, client_start, client_end, log_cal
 
             assigned_id = op.get("assignedTo") or op.get("assigned_to") or op.get("assigned_to_id")
             vendedor_raw = u_map.get(assigned_id, "")
+            vendedor_final = get_mapped_vendedor(vendedor_raw)
 
             gnam = op.get("contact", {}).get("name", "") if isinstance(op.get("contact"), dict) else ""
             opp_id_val = op.get("id", "")
@@ -499,7 +500,7 @@ def fetch_for_account(acc, ghl_start, ghl_end, client_start, client_end, log_cal
                 "secuencia": acc_name,
                 "fase": op.get("pipelineStageName", "Cierre de Venta"),
                 "Valor del cliente potencial": op.get("monetaryValue", 0),
-                "asignado": vendedor_raw,
+                "asignado": vendedor_final,
                 "Creado": format_date_ghl(op.get("createdAt")),
                 "Ultimo Actualizado": format_date_ghl(op.get("updatedAt")),
                 "Seguidores": "",
