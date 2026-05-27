@@ -1,10 +1,9 @@
 /* =========================================================
    SISTEMA DE MUEBLERÍA IA - Versión Web Chat Autónoma
    - Basado en Versión Maestro Integrada (Final V5)
-   - Soporte para Plurales en Tamaños (Grandes, Medianos, etc.)
-   - Selección por Precio en Catálogo
-   - Refinamiento de Catálogo: Búsqueda dinámica por especificaciones
-   - Cobertura Avanzada: Búsqueda por Departamento/Municipio
+   - Handover para consultas técnicas desconocidas
+   - Desglose de piezas individuales de combos ("Solo el...")
+   - Catálogo visualmente optimizado con espaciado amplio
 ========================================================= */
 
 const ordenEstados = { nuevo: 0, catalogo: 1, producto: 2, precio: 3, objecion: 4, cierre: 5 };
@@ -43,14 +42,10 @@ async function obtenerRespuestaCoverage(texto, env, state) {
     const listadoRaw = await env.COVERAGE_DB.get("coverage:listado");
     const listado = JSON.parse(listadoRaw || "[]");
     const m = normalizarTextoGlobal(texto);
-
-    // 1. Intento de búsqueda directa por municipio
     for (const item of listado) {
       const u = normalizarTextoGlobal(item.ubicacion);
       if (u.length > 3 && m.includes(u)) return item.respuesta;
     }
-
-    // 2. Si no hay match directo y es una pregunta de cobertura, pedimos departamento
     const pideUbicacion = /(donde|ubica|envio|flete|entrega|cobertura|llegan|mandan|lugar|municipio|departamento|entregan)/i.test(m);
     if (pideUbicacion && !state.esperando_departamento) {
         state.esperando_departamento = true;
@@ -58,8 +53,6 @@ async function obtenerRespuestaCoverage(texto, env, state) {
         state.municipio_pendiente = munLimpio;
         return "[PREGUNTAR_DEP] Lo siento, para ubicarle de mejor manera y brindarle la información de entrega exacta, ¿podría indicarme a qué departamento pertenece el lugar donde se encuentra? 😉";
     }
-
-    // 3. Si estábamos esperando el departamento
     if (state.esperando_departamento) {
         const depInput = m;
         const depMunRaw = await env.COVERAGE_DB.get("listado:depmun");
@@ -69,34 +62,22 @@ async function obtenerRespuestaCoverage(texto, env, state) {
             if (depKey) {
                 const municipios = depMun[depKey];
                 const munPendiente = state.municipio_pendiente ? normalizarTextoGlobal(state.municipio_pendiente) : "";
-
                 let munReal = null;
                 if (munPendiente.length > 3) {
-                    munReal = municipios.find(mun => {
-                        const nm = normalizarTextoGlobal(mun);
-                        return munPendiente.includes(nm) || nm.includes(munPendiente);
-                    });
+                    munReal = municipios.find(mun => { const nm = normalizarTextoGlobal(mun); return munPendiente.includes(nm) || nm.includes(munPendiente); });
                     if (!munReal) {
                         const partes = munPendiente.split(" ").filter(p => p.length > 3);
-                        for (let p of partes) {
-                            munReal = municipios.find(mun => normalizarTextoGlobal(mun).includes(p));
-                            if (munReal) break;
-                        }
+                        for (let p of partes) { munReal = municipios.find(mun => normalizarTextoGlobal(mun).includes(p)); if (munReal) break; }
                     }
                 }
-
                 if (munReal) {
                     const resFinal = await env.COVERAGE_DB.get("coverage:" + normalizarTextoGlobal(munReal), { type: "json" });
-                    state.esperando_departamento = false;
-                    state.municipio_pendiente = null;
+                    state.esperando_departamento = false; state.municipio_pendiente = null;
                     if (resFinal && resFinal.respuesta) return resFinal.respuesta;
                 }
-
                 const resDep = await env.COVERAGE_DB.get("coverage:" + normalizarTextoGlobal(depKey), { type: "json" });
-                state.esperando_departamento = false;
-                state.municipio_pendiente = null;
+                state.esperando_departamento = false; state.municipio_pendiente = null;
                 if (resDep && resDep.respuesta) return resDep.respuesta;
-
                 return "Perfecto, en " + depKey.toUpperCase() + " realizamos entregas. ¿Le gustaría que coticemos el envío de algún mueble en específico? 😉";
             }
         }
@@ -173,8 +154,6 @@ async function buscarProductoPorCodigoEnMensaje(mensaje, env) {
 function detectarSeleccionNatural(mensaje, lista) {
   if (!Array.isArray(lista) || lista.length === 0) return null;
   const m = normalizarEntradaAvanzada(mensaje);
-
-  // 1. Detección por precio (Ej: "el de 2500" o "Q2500")
   const matchPrecio = m.match(/\b(?:q|qt)?\s?(\d{3,5})\b/i);
   if (matchPrecio) {
       const precioMsg = parseInt(matchPrecio[1]);
@@ -184,7 +163,6 @@ function detectarSeleccionNatural(mensaje, lista) {
       });
       if (idxPrecio !== -1) return idxPrecio;
   }
-
   if (/\b(medida|cuanto|precio|limpia|resiste|material|fotos|imagenes|color|garantia|dimension)\b/i.test(m)) return null;
   const mapa = { "primero": 0, "primer": 0, "uno": 0, "la 1": 0, "el 1": 0, "segundo": 1, "dos": 1, "la 2": 1, "el 2": 1, "tercero": 2, "tres": 2, "la 3": 2, "el 3": 2, "cuarto": 3, "cuatro": 3, "la 4": 3, "el 4": 3, "ultimo": lista.length - 1 };
   for (let key in mapa) { if (new RegExp("\\b" + key + "\\b", "i").test(m)) return mapa[key]; }
@@ -228,17 +206,13 @@ async function moduloCatalogo(message, state, env) {
   let catFound = categorias.find(c => m.includes(c));
   let cat = catFound || state.ultima_categoria || null;
   let tamano = state.filtro_tamano;
-
-  // 1. Detección de tamaño con sinonimos avanzados (Soporta singular y plural)
   const mMediano = /\b(mediano|mediana|medianos|medianas|pequeño|pequeña|pequeños|pequeñas|estandar|normal|normales)\b/i.test(m);
   const mGrande = /\b(grande|grandes|enorme|enormes|gigante|gigantes|amplio|amplios|espacioso|espaciosos)\b/i.test(m);
-
   if (mMediano) tamano = "mediano"; else if (mGrande) tamano = "grande";
   if (tamano) state.filtro_tamano = tamano; if (catFound) state.ultima_categoria = cat;
   if (!cat) return { text: "Bienvenido. ¿En qué puedo ayudarle hoy? Contamos con variedad de:\n\n✨ CAMAS\n✨ COCINAS\n✨ ROPEROS\n✨ SALAS\n✨ COMEDORES\n✨ GAVETEROS\n\n¿Cuál le gustaría conocer? 😉" };
   if (!tamano) { const genero = (cat === "cama" || cat === "cocina" || cat === "sala" || cat === "mesa") ? "a" : "o"; return { text: "¿Busca opciones de " + cat.toUpperCase() + " en tamaño " + (genero === "a" ? "mediana" : "mediano") + " o grande? 😉" }; }
 
-  // --- REFINAMIENTO DINÁMICO ---
   const ignorar = ["mediano", "grande", "pequeño", "otros", "opciones", "combos", "promociones", "muestreme", "mas", "cama", "cocina", "ropero", "sala", "comedor", "mueble", "amueblado"];
   const specs = m.split(/\s+/).filter(word => word.length >= 4 && !ignorar.includes(word));
   const filteredList = (cat === "muebles") ? listado : listado.filter(p => normalizarTextoGlobal(p.nombre || p.titulo).includes(cat));
@@ -266,9 +240,14 @@ async function moduloCatalogo(message, state, env) {
   resultados = resultados.slice(0, 4);
   if (resultados.length === 0) return { text: "Lo siento, no encontré opciones de " + cat.toUpperCase() + " disponibles en este momento con esas especificaciones. 😉" };
   state.carrito_json = resultados.map(p => ({ key: p.key, nombre: p.nombre || p.titulo, precio: p.precio }));
-  let resp = preMsg || ("Aquí tiene opciones de " + cat.toUpperCase() + (tamano ? " " + tamano.toUpperCase() : "") + "S disponibles:\n\n");
-  resultados.forEach((p, i) => { resp += (i + 1) + ". " + (p.nombre || p.titulo).toUpperCase() + " - Q" + p.precio + "\n"; });
-  resp += "\n¿Cuál le gustaría conocer a detalle? 😉"; return { text: resp };
+
+  // --- UI MEJORADA CON ESPACIADO ---
+  let resp = preMsg || ("Aquí tiene opciones de **" + cat.toUpperCase() + (tamano ? " " + tamano.toUpperCase() : "") + "S** disponibles:\n\n");
+  resultados.forEach((p, i) => {
+      resp += "📍 **" + (i + 1) + ". " + (p.nombre || p.titulo).toUpperCase() + "**\n";
+      resp += "💰 **Precio: Q" + p.precio + "**\n\n";
+  });
+  resp += "¿Cuál le gustaría conocer a detalle? 😉"; return { text: resp };
 }
 
 // --- Flow Principal ---
@@ -282,18 +261,44 @@ async function processFullFlow(message, state, env) {
     const tieneCategoria = /cama|ropero|cocina|mueble|amueblado|comedor|mesa|gavetero|tocador|trinchante|platera|marquesa|cabecera|mesita|librera/i.test(norm);
     const esAfirmacionGenerica = /^(ok|vale|esta bien|muy bien|si gracias|de acuerdo|perfecto|entendido|así es|esta ok|está ok|si|sii|por favor|porfavor|claro|envia|mandame)$/i.test(norm.trim());
     const esSoloSaludo = /^(hola|buen|buena|buenas|tarde|dia|dias|noche|noches|buena tarde|buen dia|buenos dias|buenas noches|buenas tardes|\s)+$/i.test(norm.trim());
+
+    // --- NUEVAS DETECCIONES: Solo el... y Tecnicas desconocidas ---
+    const pideSoloParte = /\b(solo|solamente|separado|aparte|sin el|sin la)\b/i.test(norm);
+    const esConsultaTecnicaRara = /\b(colgante|desarmar|desarma|doblar|dobla|empotra|pared|techo|tornillo|instala|clavo|madera tipo)\b/i.test(norm);
+
     const currentEstado = state.estado_actual || "nuevo";
-    const yaEnvioMenu = state.menu_ayuda_enviado === "true";
-    const esPrimerMensaje = (currentEstado === "nuevo");
     const prevProductoId = state.producto_id; const carrito = state.carrito_json || [];
-    let targetProduct = null; let esSeleccionReciente = false;
+
+    // 1. Handover para preguntas técnicas desconocidas
+    if (esConsultaTecnicaRara) {
+        return { text: "Excelente pregunta. Para brindarle una respuesta técnica exacta sobre la instalación y materiales específicos, le transferiré con un asesor especializado. Un momento por favor... 👨‍💼", images: [], state: state };
+    }
 
     const respCoverage = await obtenerRespuestaCoverage(message, env, state);
     if (respCoverage) { if (respCoverage.includes("[PREGUNTAR_DEP]")) return { text: respCoverage.replace("[PREGUNTAR_DEP]", ""), images: [], state: state }; return { text: respCoverage, images: [], state: state }; }
 
+    // 2. Lógica "Solo el..." dentro de un combo
+    if (pideSoloParte && prevProductoId) {
+        const prodCombo = await obtenerProductoSeguro(prevProductoId, env);
+        if (prodCombo && prodCombo.tipo === "combo") {
+            const catsInd = ["ropero", "cocina", "cama", "cabecera", "mesita", "gavetero", "tocador", "marquesa", "trinchante", "platera"];
+            const catPedida = catsInd.find(c => norm.includes(c));
+            if (catPedida && Array.isArray(prodCombo.items)) {
+                const itemMatch = prodCombo.items.find(it => normalizarTextoGlobal(it.titulo || it.nombre).includes(catPedida));
+                if (itemMatch) {
+                    const fullSpecs = "Medidas: " + (itemMatch.medidas || "N/A") + "\nMaterial: " + (itemMatch.estructura || "N/A") + "\nColores: " + (itemMatch.colores || "N/A");
+                    const imgs = [itemMatch.imagen1, itemMatch.imagen2, itemMatch.imagen, itemMatch.url].filter(img => typeof img === "string" && img.length > 10 && img.startsWith("http"));
+                    return { text: "Con gusto, aquí tiene el detalle de la pieza individual:\n\n**" + itemMatch.titulo.toUpperCase() + "**\n💰 Precio: Q" + itemMatch.precio + "\n" + fullSpecs + "\n\nLe transferiré con un asesor para que pueda ayudarle con la compra por separado. 😉", images: imgs, state: state };
+                }
+            }
+        }
+    }
+
+    let targetProduct = null; let esSeleccionReciente = false;
     let selIdx = detectarSeleccionNatural(message, carrito);
     if (selIdx !== null && carrito[selIdx]) { const prodId = carrito[selIdx].key.split(":").pop(); targetProduct = await obtenerProductoSeguro(prodId, env); if (targetProduct) esSeleccionReciente = true; }
     if (currentEstado === "catalogo" && !targetProduct && !pideInformacion && (pideCatalogo || norm.length > 4)) { const resCat = await moduloCatalogo(message, state, env); return { text: resCat.text, images: [], state: state }; }
+
     if (!targetProduct) {
         if (prevProductoId && (pideInformacion || esAfirmacionGenerica)) targetProduct = await obtenerProductoSeguro(prevProductoId, env);
         if (!targetProduct) targetProduct = await buscarProductoPorCodigoEnMensaje(message, env);
@@ -301,6 +306,7 @@ async function processFullFlow(message, state, env) {
         if (!targetProduct && !pideCatalogo && !pideInformacion) targetProduct = await buscarProductoPorNombreEnMensaje(message, env);
     }
     if (targetProduct) state.producto_id = targetProduct.id;
+
     let responseText, responseImgs = [], estadoPropuesto = currentEstado === "nuevo" ? "interaccion" : currentEstado;
     if (targetProduct && !pideCatalogo) {
       estadoPropuesto = pideCompra ? "cierre" : "producto";
@@ -308,12 +314,12 @@ async function processFullFlow(message, state, env) {
       let catProd = cats.find(c => tituloProd.includes(c)) || state.ultima_categoria; if (catProd) state.ultima_categoria = catProd;
       if (esSeleccionReciente || pideFotos) { if (targetProduct.tipo === "combo" && Array.isArray(targetProduct.items) && targetProduct.items.length >= 3) responseImgs = [...new Set(targetProduct.items.map(item => item.imagen1 || item.imagen2 || item.imagen || item.url || item.link || item.link_publico).filter(url => typeof url === "string" && url.length > 10 && url.startsWith("http")))]; else responseImgs = targetProduct.imagenes || []; }
       const coverage = await obtenerRespuestaCoverage(message, env, state); const esNuevoProducto = targetProduct.id !== prevProductoId && !pideInformacion;
-      responseText = await callVendedorElitePro(message, env, targetProduct, pideCompra, coverage, esSoloSaludo, esPrimerMensaje, yaEnvioMenu, esNuevoProducto);
-      if ((esNuevoProducto || !yaEnvioMenu) && /Medidas|Colores|Materiales|Precios|Envío|Cuotas/i.test(responseText)) state.menu_ayuda_enviado = "true";
+      responseText = await callVendedorElitePro(message, env, targetProduct, pideCompra, coverage, esSoloSaludo, (currentEstado === "nuevo"), (state.menu_ayuda_enviado === "true"), esNuevoProducto);
+      if ((esNuevoProducto || state.menu_ayuda_enviado !== "true") && /Medidas|Colores|Materiales|Precios|Envío|Cuotas/i.test(responseText)) state.menu_ayuda_enviado = "true";
     } else if ((pideCatalogo || tieneCategoria || (esSoloSaludo && !state.ultima_categoria) || /\b(mediano|mediana|grande|pequeño|pequeña|enorme|gigante)\b/i.test(norm)) && !pideInformacion) {
       estadoPropuesto = "catalogo"; const resCat = await moduloCatalogo(message, state, env); responseText = resCat.text;
     } else {
-      const coverage = await obtenerRespuestaCoverage(message, env, state); responseText = await callVendedorElitePro(message, env, targetProduct, pideCompra, coverage, esSoloSaludo, esPrimerMensaje, yaEnvioMenu, false);
+      const coverage = await obtenerRespuestaCoverage(message, env, state); responseText = await callVendedorElitePro(message, env, targetProduct, pideCompra, coverage, esSoloSaludo, (currentEstado === "nuevo"), (state.menu_ayuda_enviado === "true"), false);
     }
     state.estado_actual = estadoPropuesto; const caption = targetProduct ? (targetProduct.titulo || "").toUpperCase() : ""; let finalMsg = responseText;
     if (caption && !responseText.toUpperCase().includes(caption)) finalMsg = "**" + caption + "**\n\n" + responseText;
