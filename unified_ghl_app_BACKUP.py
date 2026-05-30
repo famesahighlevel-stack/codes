@@ -491,7 +491,6 @@ def fetch_for_account(acc, ghl_start, ghl_end, client_start, client_end, log_cal
 
             assigned_id = op.get("assignedTo") or op.get("assigned_to") or op.get("assigned_to_id")
             vendedor_raw = u_map.get(assigned_id, "")
-            vendedor_final = get_mapped_vendedor(vendedor_raw)
 
             gnam = op.get("contact", {}).get("name", "") if isinstance(op.get("contact"), dict) else ""
             opp_id_val = op.get("id", "")
@@ -500,7 +499,7 @@ def fetch_for_account(acc, ghl_start, ghl_end, client_start, client_end, log_cal
                 "secuencia": acc_name,
                 "fase": op.get("pipelineStageName", "Cierre de Venta"),
                 "Valor del cliente potencial": op.get("monetaryValue", 0),
-                "asignado": vendedor_final,
+                "asignado": vendedor_raw,
                 "Creado": format_date_ghl(op.get("createdAt")),
                 "Ultimo Actualizado": format_date_ghl(op.get("updatedAt")),
                 "Seguidores": "",
@@ -855,7 +854,7 @@ class App(cctk.CTk):
                                     spend_usd, budget_usd = spend_orig, budget_orig
                                 else:
                                     spend_q, budget_q = spend_orig, budget_orig
-                                    spend_usd, budget_usd = spend_orig / USD_TO_GTQ, budget_orig / USD_TO_GTQ
+                                    spend_usd, budget_usd = "", ""
                                 res_fb.append({
                                     "ID del anuncio": aid,
                                     "ID de la página": pid,
