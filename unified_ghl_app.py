@@ -251,7 +251,15 @@ def get_users_by_location(location_id, token, version=API_VERSION_OPPS):
         r = requests.get(url, headers=headers, timeout=30)
         if r.status_code != 200:
             return {}
-        return {u.get("id"): f"{u.get('firstName','') or ''} {u.get('lastName','') or ''}".strip() or u.get("email", "Desconocido") for u in r.json().get("users", [])}
+        users = r.json().get("users", [])
+        user_map = {}
+        for u in users:
+            uid = u.get("id")
+            first = u.get("firstName", "") or ""
+            last = u.get("lastName", "") or ""
+            name = f"{first} {last}".strip() or u.get("email", "Desconocido")
+            user_map[uid] = name
+        return user_map
     except:
         return {}
 
@@ -383,7 +391,7 @@ def fetch_contacts_for_account(acc, start_utc, end_utc, log_callback):
     token, loc, acc_name = acc["token"], acc["location_id"], acc["name"]
     sec_cf, anu_cf, pm_cf = acc["secuencia_cf"], acc["anuncio_cf"], acc["primer_mensaje_cf"]
     log_callback(f"Extraer Contactos: {acc_name}...")
-    u_map = get_users_by_location(loc, token, version=API_VERSION_CONTACTS)
+    u_map = get_users_by_location(loc, token, version=API_VERSION_OPPS)
     all_contacts, page, limit = [], 1, 100
     url = "https://services.leadconnectorhq.com/contacts/search"
     while True:
@@ -440,7 +448,7 @@ def fetch_contacts_for_account(acc, start_utc, end_utc, log_callback):
 def fetch_for_account(acc, ghl_start, ghl_end, client_start, client_end, log_callback):
     token, loc, stage, cfield, dv_id, acc_name = acc["token"], acc["location_id"], acc["stage_id"], acc["custom_field"], acc["dataventa_id"], acc["name"]
     log_callback(f"Extraer Ventas: {acc_name}...")
-    u_map = get_users_by_location(loc, token, version=API_VERSION_CONTACTS)
+    u_map = get_users_by_location(loc, token, version=API_VERSION_OPPS)
     cf_names = get_custom_fields_map(loc, token)
     all_opps, page, limit = [], 1, 100
     url = "https://services.leadconnectorhq.com/opportunities/search"
@@ -469,11 +477,10 @@ def fetch_for_account(acc, ghl_start, ghl_end, client_start, client_end, log_cal
         page += 1
         if len(opps) < limit:
             break
-    r_opps, r_ventas, r_debug = [], [], []
+    r_opps, r_ventas = [], []
     for op in all_opps:
         if not isinstance(op, dict):
             continue
-        r_debug.append({"id": op.get("id"), "assignedTo": op.get("assignedTo"), "raw": json.dumps(op)})
         try:
             opp_cfs = op.get("customFields") or op.get("custom_fields") or []
             sale_date_iso, sale_date_str, dv_str, cf_data = "", "", "", {}
@@ -537,7 +544,7 @@ def fetch_for_account(acc, ghl_start, ghl_end, client_start, client_end, log_cal
             r_ventas.extend(parse_ventas_unnested(dv_str, op.get("contactId", ""), op.get("id", ""), gp, vendedor_raw, gnam, sale_date_str))
         except:
             continue
-    return r_opps, r_ventas, r_debug
+    return r_opps, r_ventas
 
 # ---------------------------
 # Backend Functions: Facebook
@@ -793,7 +800,7 @@ class App(cctk.CTk):
     def execute_logic(self, has_sales, has_contacts, has_fb):
         try:
             self.log("Iniciando extracción modular...")
-            res_o, res_v, res_c, res_fb, res_debug = [], [], [], [], []
+            res_o, res_v, res_c, res_fb = [], [], [], []
             with ThreadPoolExecutor(max_workers=5) as ex:
                 futures = []
                 f_map = {}
@@ -823,10 +830,9 @@ class App(cctk.CTk):
                 for f in as_completed(futures):
                     type, acc_data = f_map[f]
                     if type == "opp":
-                        o, v, d = f.result()
+                        o, v = f.result()
                         res_o.extend(o)
                         res_v.extend(v)
-                        res_debug.extend(d)
                     elif type == "con":
                         res_c.extend(f.result())
                     elif type == "fb":
@@ -878,7 +884,7 @@ class App(cctk.CTk):
                                     "SECUENCIA": extraer_secuencia(camp)
                                 })
             if res_o or res_c or res_fb:
-                self.generate_excel(res_o, res_v, res_c, res_fb, res_debug)
+                self.generate_excel(res_o, res_v, res_c, res_fb)
             else:
                 self.log("Sin datos.")
         except Exception as e:
@@ -886,9 +892,9 @@ class App(cctk.CTk):
         finally:
             self.after(0, lambda: self.generate_btn.configure(state="normal", text="🚀 GENERAR EXCEL"))
 
-    def generate_excel(self, res_o, res_v, res_c, res_fb, res_debug):
+    def generate_excel(self, res_o, res_v, res_c, res_fb):
         self.log("Compilando...")
-        df_o, df_v, df_c, df_fb, df_debug = pd.DataFrame(res_o), pd.DataFrame(res_v), pd.DataFrame(res_c), pd.DataFrame(res_fb), pd.DataFrame(res_debug)
+        df_o, df_v, df_c, df_fb = pd.DataFrame(res_o), pd.DataFrame(res_v), pd.DataFrame(res_c), pd.DataFrame(res_fb)
         head = ["secuencia", "fase", "Valor del cliente potencial", "asignado", "Creado", "Ultimo Actualizado", "Seguidores", "Notas", "etiquetas", "estado", "Fecha de Venta", "NIT", "Camas y Combos SKU", "Cantidad Camas y Combo SKU", "Camas y Combos SKU1", "Cantidad Camas y Combo SKU1", "Cocinas SKU", "Cantidad Cocinas SKU", "Cocinas SKU1", "Cantidad Cocinas SKU1", "Salas SKU", "Cantidad Salas SKU", "Salas SKU1", "Cantidad Salas SKU1"]
         tail = ["", "Departamento", "Municipio", "Telefono 1", "Telefono 2", "ID de oportunidad", "ID de contacto", "Cliente", "Mes", "Cod", "DataVenta", "Fecha", "MARCA", "ANILLO", "UBICACION"]
         if not df_o.empty:
@@ -928,8 +934,6 @@ class App(cctk.CTk):
                 df_c.to_excel(writer, sheet_name='CONTACTOS', index=False)
             if not df_fb.empty:
                 df_fb.to_excel(writer, sheet_name='FACEBOOK ADS', index=False)
-            if not df_debug.empty:
-                df_debug.to_excel(writer, sheet_name='DEBUG GHL', index=False)
             pd.DataFrame().to_excel(writer, sheet_name='Hoja1', index=False)
             if not df_v.empty:
                 ws_v = writer.book['VENTAS']
