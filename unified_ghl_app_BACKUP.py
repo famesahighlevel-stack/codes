@@ -469,10 +469,11 @@ def fetch_for_account(acc, ghl_start, ghl_end, client_start, client_end, log_cal
         page += 1
         if len(opps) < limit:
             break
-    r_opps, r_ventas = [], []
+    r_opps, r_ventas, r_debug = [], [], []
     for op in all_opps:
         if not isinstance(op, dict):
             continue
+        r_debug.append({"id": op.get("id"), "assignedTo": op.get("assignedTo"), "raw": json.dumps(op)})
         try:
             opp_cfs = op.get("customFields") or op.get("custom_fields") or []
             sale_date_iso, sale_date_str, dv_str, cf_data = "", "", "", {}
@@ -490,7 +491,7 @@ def fetch_for_account(acc, ghl_start, ghl_end, client_start, client_end, log_cal
                 continue
 
             assigned_id = op.get("assignedTo") or op.get("assigned_to") or op.get("assigned_to_id")
-            vendedor_raw = u_map.get(assigned_id, "")
+            vendedor_raw = u_map.get(assigned_id) or assigned_id or ""
 
             gnam = op.get("contact", {}).get("name", "") if isinstance(op.get("contact"), dict) else ""
             opp_id_val = op.get("id", "")
@@ -536,7 +537,7 @@ def fetch_for_account(acc, ghl_start, ghl_end, client_start, client_end, log_cal
             r_ventas.extend(parse_ventas_unnested(dv_str, op.get("contactId", ""), op.get("id", ""), gp, vendedor_raw, gnam, sale_date_str))
         except:
             continue
-    return r_opps, r_ventas
+    return r_opps, r_ventas, r_debug
 
 # ---------------------------
 # Backend Functions: Facebook
@@ -792,7 +793,7 @@ class App(cctk.CTk):
     def execute_logic(self, has_sales, has_contacts, has_fb):
         try:
             self.log("Iniciando extracción modular...")
-            res_o, res_v, res_c, res_fb = [], [], [], []
+            res_o, res_v, res_c, res_fb, res_debug = [], [], [], [], []
             with ThreadPoolExecutor(max_workers=5) as ex:
                 futures = []
                 f_map = {}
@@ -822,9 +823,10 @@ class App(cctk.CTk):
                 for f in as_completed(futures):
                     type, acc_data = f_map[f]
                     if type == "opp":
-                        o, v = f.result()
+                        o, v, d = f.result()
                         res_o.extend(o)
                         res_v.extend(v)
+                        res_debug.extend(d)
                     elif type == "con":
                         res_c.extend(f.result())
                     elif type == "fb":
@@ -876,7 +878,7 @@ class App(cctk.CTk):
                                     "SECUENCIA": extraer_secuencia(camp)
                                 })
             if res_o or res_c or res_fb:
-                self.generate_excel(res_o, res_v, res_c, res_fb)
+                self.generate_excel(res_o, res_v, res_c, res_fb, res_debug)
             else:
                 self.log("Sin datos.")
         except Exception as e:
@@ -884,9 +886,9 @@ class App(cctk.CTk):
         finally:
             self.after(0, lambda: self.generate_btn.configure(state="normal", text="🚀 GENERAR EXCEL"))
 
-    def generate_excel(self, res_o, res_v, res_c, res_fb):
+    def generate_excel(self, res_o, res_v, res_c, res_fb, res_debug):
         self.log("Compilando...")
-        df_o, df_v, df_c, df_fb = pd.DataFrame(res_o), pd.DataFrame(res_v), pd.DataFrame(res_c), pd.DataFrame(res_fb)
+        df_o, df_v, df_c, df_fb, df_debug = pd.DataFrame(res_o), pd.DataFrame(res_v), pd.DataFrame(res_c), pd.DataFrame(res_fb), pd.DataFrame(res_debug)
         head = ["secuencia", "fase", "Valor del cliente potencial", "asignado", "Creado", "Ultimo Actualizado", "Seguidores", "Notas", "etiquetas", "estado", "Fecha de Venta", "NIT", "Camas y Combos SKU", "Cantidad Camas y Combo SKU", "Camas y Combos SKU1", "Cantidad Camas y Combo SKU1", "Cocinas SKU", "Cantidad Cocinas SKU", "Cocinas SKU1", "Cantidad Cocinas SKU1", "Salas SKU", "Cantidad Salas SKU", "Salas SKU1", "Cantidad Salas SKU1"]
         tail = ["", "Departamento", "Municipio", "Telefono 1", "Telefono 2", "ID de oportunidad", "ID de contacto", "Cliente", "Mes", "Cod", "DataVenta", "Fecha", "MARCA", "ANILLO", "UBICACION"]
         if not df_o.empty:
@@ -926,6 +928,8 @@ class App(cctk.CTk):
                 df_c.to_excel(writer, sheet_name='CONTACTOS', index=False)
             if not df_fb.empty:
                 df_fb.to_excel(writer, sheet_name='FACEBOOK ADS', index=False)
+            if not df_debug.empty:
+                df_debug.to_excel(writer, sheet_name='DEBUG GHL', index=False)
             pd.DataFrame().to_excel(writer, sheet_name='Hoja1', index=False)
             if not df_v.empty:
                 ws_v = writer.book['VENTAS']
