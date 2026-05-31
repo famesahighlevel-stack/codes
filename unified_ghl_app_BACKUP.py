@@ -244,12 +244,13 @@ def get_custom_fields_map(location_id, token):
     except:
         return {}
 
-def get_users_by_location(location_id, token, version=API_VERSION_OPPS):
+def get_users_by_location(location_id, token, log_callback, version="2021-07-28"):
     url = f"https://services.leadconnectorhq.com/users/?locationId={location_id}"
     headers = {"Authorization": f"Bearer {token}", "Version": version, "Accept": "application/json"}
     try:
         r = requests.get(url, headers=headers, timeout=30)
         if r.status_code != 200:
+            log_callback(f"  [ERROR] No se pudo obtener usuarios ({r.status_code})")
             return {}
         users = r.json().get("users", [])
         user_map = {}
@@ -259,8 +260,10 @@ def get_users_by_location(location_id, token, version=API_VERSION_OPPS):
             last = u.get("lastName", "") or ""
             name = f"{first} {last}".strip() or u.get("email", "Desconocido")
             user_map[uid] = name
+        log_callback(f"  - Usuarios cargados: {len(user_map)}")
         return user_map
-    except:
+    except Exception as e:
+        log_callback(f"  [ERROR] Excepción cargando usuarios: {str(e)[:50]}")
         return {}
 
 def safe_post(url, token, payload, version):
@@ -391,7 +394,7 @@ def fetch_contacts_for_account(acc, start_utc, end_utc, log_callback):
     token, loc, acc_name = acc["token"], acc["location_id"], acc["name"]
     sec_cf, anu_cf, pm_cf = acc["secuencia_cf"], acc["anuncio_cf"], acc["primer_mensaje_cf"]
     log_callback(f"Extraer Contactos: {acc_name}...")
-    u_map = get_users_by_location(loc, token, version=API_VERSION_OPPS)
+    u_map = get_users_by_location(loc, token, log_callback)
     all_contacts, page, limit = [], 1, 100
     url = "https://services.leadconnectorhq.com/contacts/search"
     while True:
@@ -417,7 +420,7 @@ def fetch_contacts_for_account(acc, start_utc, end_utc, log_callback):
     formatted_contacts = []
     for c in all_contacts:
         uid = c.get("assignedTo")
-        assigned_name = u_map.get(uid, "") if uid else ""
+        assigned_name = u_map.get(uid) or uid or ""
         date_iso, date_fmt = c.get("dateAdded"), ""
         if date_iso:
             dt_local = datetime.fromisoformat(date_iso.replace("Z", "+00:00")).astimezone(GUATEMALA_TZ)
@@ -448,7 +451,7 @@ def fetch_contacts_for_account(acc, start_utc, end_utc, log_callback):
 def fetch_for_account(acc, ghl_start, ghl_end, client_start, client_end, log_callback):
     token, loc, stage, cfield, dv_id, acc_name = acc["token"], acc["location_id"], acc["stage_id"], acc["custom_field"], acc["dataventa_id"], acc["name"]
     log_callback(f"Extraer Ventas: {acc_name}...")
-    u_map = get_users_by_location(loc, token, version=API_VERSION_OPPS)
+    u_map = get_users_by_location(loc, token, log_callback)
     cf_names = get_custom_fields_map(loc, token)
     all_opps, page, limit = [], 1, 100
     url = "https://services.leadconnectorhq.com/opportunities/search"
