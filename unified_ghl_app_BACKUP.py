@@ -244,8 +244,9 @@ def get_custom_fields_map(location_id, token):
     except:
         return {}
 
-def get_users_by_location(location_id, token, log_callback, acc_name, all_users_list, version="2021-07-28"):
+def get_users_by_location(location_id, token, log_callback, acc_name, version="2021-07-28"):
     user_map = {}
+    user_list = []
     limit = 100
     skip = 0
     try:
@@ -268,17 +269,17 @@ def get_users_by_location(location_id, token, log_callback, acc_name, all_users_
                 last = u.get("lastName", "") or ""
                 name = f"{first} {last}".strip() or u.get("email", "Desconocido")
                 user_map[uid] = name
-                all_users_list.append({"Cuenta": acc_name, "ID Usuario": uid, "Nombre Resolvido": name})
+                user_list.append({"Cuenta": acc_name, "ID Usuario": uid, "Nombre Resolvido": name})
 
             if len(users) < limit:
                 break
             skip += limit
 
         log_callback(f"  - {acc_name}: {len(user_map)} usuarios cargados.")
-        return user_map
+        return user_map, user_list
     except Exception as e:
         log_callback(f"  [ERROR] Excepción cargando usuarios de {acc_name}: {str(e)[:50]}")
-        return user_map
+        return user_map, user_list
 
 def safe_post(url, token, payload, version):
     headers = {"Authorization": f"Bearer {token}", "Version": version, "Content-Type": "application/json"}
@@ -404,11 +405,10 @@ def extraer_secuencia(text):
     match_sec = SECUENCIA_REGEX.search(text.upper())
     return match_sec.group(1) if match_sec else ""
 
-def fetch_contacts_for_account(acc, start_utc, end_utc, log_callback, all_users_list):
+def fetch_contacts_for_account(acc, start_utc, end_utc, log_callback, u_map):
     token, loc, acc_name = acc["token"], acc["location_id"], acc["name"]
     sec_cf, anu_cf, pm_cf = acc["secuencia_cf"], acc["anuncio_cf"], acc["primer_mensaje_cf"]
     log_callback(f"Extraer Contactos: {acc_name}...")
-    u_map = get_users_by_location(loc, token, log_callback, acc_name, all_users_list)
     all_contacts, page, limit = [], 1, 100
     url = "https://services.leadconnectorhq.com/contacts/search"
     while True:
@@ -462,10 +462,9 @@ def fetch_contacts_for_account(acc, start_utc, end_utc, log_callback, all_users_
         })
     return formatted_contacts
 
-def fetch_for_account(acc, ghl_start, ghl_end, client_start, client_end, log_callback, all_users_list):
+def fetch_for_account(acc, ghl_start, ghl_end, client_start, client_end, log_callback, u_map):
     token, loc, stage, cfield, dv_id, acc_name = acc["token"], acc["location_id"], acc["stage_id"], acc["custom_field"], acc["dataventa_id"], acc["name"]
     log_callback(f"Extraer Ventas: {acc_name}...")
-    u_map = get_users_by_location(loc, token, log_callback, acc_name, all_users_list)
     cf_names = get_custom_fields_map(loc, token)
     all_opps, page, limit = [], 1, 100
     url = "https://services.leadconnectorhq.com/opportunities/search"
@@ -816,9 +815,21 @@ class App(cctk.CTk):
 
     def execute_logic(self, has_sales, has_contacts, has_fb):
         try:
-            self.log("Iniciando extracción modular...")
+            self.log("Cargando usuarios de todas las cuentas...")
             res_o, res_v, res_c, res_fb, res_u = [], [], [], [], []
+            user_maps = {} # loc_id -> map
+
             with ThreadPoolExecutor(max_workers=5) as ex:
+                # 1. Siempre descargar usuarios de todas las cuentas
+                user_futures = {ex.submit(get_users_by_location, acc["location_id"], acc["token"], self.log, acc["name"]): acc["location_id"] for acc in ACCOUNTS}
+                for f in as_completed(user_futures):
+                    loc_id = user_futures[f]
+                    u_map, u_list = f.result()
+                    user_maps[loc_id] = u_map
+                    res_u.extend(u_list)
+
+                # 2. Ahora proceder con la extracción de datos usando los mapas ya cargados
+                self.log("Iniciando extracción modular...")
                 futures = []
                 f_map = {}
                 if has_sales:
@@ -827,14 +838,14 @@ class App(cctk.CTk):
                     ghl_s_o = sd_opp.strftime("%Y-%m-%dT00:00:00.000Z")
                     ghl_e_o = ed_opp.strftime("%Y-%m-%dT23:59:59.999Z")
                     for acc in ACCOUNTS:
-                        fut = ex.submit(fetch_for_account, acc, ghl_s_o, ghl_e_o, s_iso_o, e_iso_o, self.log, res_u)
+                        fut = ex.submit(fetch_for_account, acc, ghl_s_o, ghl_e_o, s_iso_o, e_iso_o, self.log, user_maps.get(acc["location_id"], {}))
                         futures.append(fut)
                         f_map[fut] = ("opp", acc)
                 if has_contacts:
                     sd_con, ed_con = self.contacts_picker.start_date, self.contacts_picker.end_date
                     s_u_c, e_u_c = make_utc_range(sd_con, ed_con)
                     for acc in ACCOUNTS:
-                        fut = ex.submit(fetch_contacts_for_account, acc, s_u_c, e_u_c, self.log, res_u)
+                        fut = ex.submit(fetch_contacts_for_account, acc, s_u_c, e_u_c, self.log, user_maps.get(acc["location_id"], {}))
                         futures.append(fut)
                         f_map[fut] = ("con", acc)
                 if has_fb:
@@ -900,7 +911,7 @@ class App(cctk.CTk):
                                     "tipo_post": tpost,
                                     "SECUENCIA": extraer_secuencia(camp)
                                 })
-            if res_o or res_c or res_fb:
+            if res_o or res_c or res_fb or res_u:
                 self.generate_excel(res_o, res_v, res_c, res_fb, res_u)
             else:
                 self.log("Sin datos.")
