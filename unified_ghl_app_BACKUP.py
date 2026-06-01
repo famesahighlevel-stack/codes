@@ -245,27 +245,40 @@ def get_custom_fields_map(location_id, token):
         return {}
 
 def get_users_by_location(location_id, token, log_callback, acc_name, all_users_list, version="2021-07-28"):
-    url = f"https://services.leadconnectorhq.com/users/?locationId={location_id}"
-    headers = {"Authorization": f"Bearer {token}", "Version": version, "Accept": "application/json"}
+    user_map = {}
+    limit = 100
+    skip = 0
     try:
-        r = requests.get(url, headers=headers, timeout=30)
-        if r.status_code != 200:
-            log_callback(f"  [ERROR] No se pudo obtener usuarios para {acc_name} ({r.status_code})")
-            return {}
-        users = r.json().get("users", [])
-        user_map = {}
-        for u in users:
-            uid = u.get("id")
-            first = u.get("firstName", "") or ""
-            last = u.get("lastName", "") or ""
-            name = f"{first} {last}".strip() or u.get("email", "Desconocido")
-            user_map[uid] = name
-            all_users_list.append({"Cuenta": acc_name, "ID Usuario": uid, "Nombre Resolvido": name})
+        while True:
+            url = f"https://services.leadconnectorhq.com/users/?locationId={location_id}&limit={limit}&skip={skip}"
+            headers = {"Authorization": f"Bearer {token}", "Version": version, "Accept": "application/json"}
+            r = requests.get(url, headers=headers, timeout=30)
+            if r.status_code != 200:
+                log_callback(f"  [ERROR] No se pudo obtener usuarios para {acc_name} ({r.status_code})")
+                break
+
+            data = r.json()
+            users = data.get("users", [])
+            if not users:
+                break
+
+            for u in users:
+                uid = u.get("id")
+                first = u.get("firstName", "") or ""
+                last = u.get("lastName", "") or ""
+                name = f"{first} {last}".strip() or u.get("email", "Desconocido")
+                user_map[uid] = name
+                all_users_list.append({"Cuenta": acc_name, "ID Usuario": uid, "Nombre Resolvido": name})
+
+            if len(users) < limit:
+                break
+            skip += limit
+
         log_callback(f"  - {acc_name}: {len(user_map)} usuarios cargados.")
         return user_map
     except Exception as e:
         log_callback(f"  [ERROR] Excepción cargando usuarios de {acc_name}: {str(e)[:50]}")
-        return {}
+        return user_map
 
 def safe_post(url, token, payload, version):
     headers = {"Authorization": f"Bearer {token}", "Version": version, "Content-Type": "application/json"}
