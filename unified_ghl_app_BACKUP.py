@@ -247,33 +247,26 @@ def get_custom_fields_map(location_id, token):
 def get_users_by_location(location_id, token, log_callback, acc_name, version="2021-07-28"):
     user_map = {}
     user_list = []
-    limit = 100
-    skip = 0
     try:
-        while True:
-            url = f"https://services.leadconnectorhq.com/users/?locationId={location_id}&limit={limit}&skip={skip}"
-            headers = {"Authorization": f"Bearer {token}", "Version": version, "Accept": "application/json"}
-            r = requests.get(url, headers=headers, timeout=30)
-            if r.status_code != 200:
-                log_callback(f"  [ERROR] No se pudo obtener usuarios para {acc_name} ({r.status_code})")
-                break
+        # La API de usuarios por locationId suele no soportar limit/skip directamente en algunas versiones,
+        # devolviendo 422. Revertimos a una consulta simple que trae todos los usuarios de la subcuenta.
+        url = f"https://services.leadconnectorhq.com/users/?locationId={location_id}"
+        headers = {"Authorization": f"Bearer {token}", "Version": version, "Accept": "application/json"}
+        r = requests.get(url, headers=headers, timeout=30)
 
-            data = r.json()
-            users = data.get("users", [])
-            if not users:
-                break
+        if r.status_code != 200:
+            log_callback(f"  [ERROR] No se pudo obtener usuarios para {acc_name} ({r.status_code})")
+            return user_map, user_list
 
-            for u in users:
-                uid = u.get("id")
-                first = u.get("firstName", "") or ""
-                last = u.get("lastName", "") or ""
-                name = f"{first} {last}".strip() or u.get("email", "Desconocido")
-                user_map[uid] = name
-                user_list.append({"Cuenta": acc_name, "ID Usuario": uid, "Nombre Resolvido": name})
-
-            if len(users) < limit:
-                break
-            skip += limit
+        data = r.json()
+        users = data.get("users", [])
+        for u in users:
+            uid = u.get("id")
+            first = u.get("firstName", "") or ""
+            last = u.get("lastName", "") or ""
+            name = f"{first} {last}".strip() or u.get("email", "Desconocido")
+            user_map[uid] = name
+            user_list.append({"Cuenta": acc_name, "ID Usuario": uid, "Nombre Resolvido": name})
 
         log_callback(f"  - {acc_name}: {len(user_map)} usuarios cargados.")
         return user_map, user_list
