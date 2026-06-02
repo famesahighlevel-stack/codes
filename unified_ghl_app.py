@@ -807,9 +807,12 @@ class App(cctk.CTk):
         has_sales = self.sales_picker.start_date and self.sales_picker.end_date
         has_contacts = self.contacts_picker.start_date and self.contacts_picker.end_date
         has_fb = self.fb_picker.start_date and self.fb_picker.end_date
+
+        # Siempre permitimos procesar para descargar usuarios,
+        # pero avisamos si no hay otros reportes seleccionados.
         if not (has_sales or has_contacts or has_fb):
-            messagebox.showwarning("Atención", "Elija al menos un rango de fechas para generar el reporte.")
-            return
+            self.log("Aviso: No hay rangos de fecha. Solo se descargarán usuarios.")
+
         self.generate_btn.configure(state="disabled", text="🚀 PROCESANDO...")
         threading.Thread(target=self.execute_logic, daemon=True, args=(has_sales, has_contacts, has_fb)).start()
 
