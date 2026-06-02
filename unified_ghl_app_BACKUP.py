@@ -444,12 +444,13 @@ def fetch_contacts_for_account(acc, start_utc, end_utc, log_callback, u_map):
         anuncio, tipo_post = extraer_datos_anuncio(anuncio_raw)
         if not anuncio and primer_mensaje_texto:
             anuncio, tipo_post = extraer_datos_anuncio(primer_mensaje_texto)
-        secuencia = extraer_secuencia(secuencia_raw)
+
+        # Estandarizado: Usar el nombre de la cuenta (acc_name) en lugar del CF de GHL
         formatted_contacts.append({
             "id": c.get("id", ""),
             "dateAdded": date_fmt,
             "assignedToName": assigned_name,
-            "secuencia": secuencia,
+            "secuencia": acc_name,
             "Anuncio": anuncio,
             "tipo_post": tipo_post
         })
