@@ -368,7 +368,7 @@
                         if (rd < s || rd > e) return false;
                     }
                 }
-                const adv = r[advCol] || r['VENDEDOR'];
+                const adv = r[advCol] || r['VENDEDOR'] || r['AsesorFinal'];
                 if (validAdvisors && !validAdvisors.includes(adv)) return false;
                 if (f.asesor !== 'all' && adv !== f.asesor) return false;
                 if (f.subAnillo !== 'all' && (r['SUB ANILLO'] !== f.subAnillo && r['1.SUB ANILLO'] !== f.subAnillo)) return false;
@@ -405,7 +405,7 @@
 
                 const advVT = vt.filter(r => (r.ASESOR||r.VENDEDOR) === adv);
                 const advBO = bo.filter(r => (r.ASESOR||r.VENDEDOR) === adv);
-                const advG = gasto.filter(r => (r.VENDEDOR) === adv);
+                const advG = gasto.filter(r => (r.AsesorFinal || r.VENDEDOR) === adv);
 
                 const stats = {
                     meta: metaRow ? (parseFloat(metaRow.META) || 0) : 0,
@@ -414,7 +414,7 @@
                     bo: advBO.reduce((a,c) => a + (parseFloat(c.TPedidoQTZ_FINAL)||0), 0),
                     ubo: advBO.reduce((a,c) => a + (parseFloat(c.BOUNIDAD)||0), 0),
                     cvt: advVT.reduce((a,c) => a + (parseFloat(c.QCOSTO_FINAL)||0), 0),
-                    gto: advG.reduce((a,c) => a + (parseFloat(c['Importe gastado Q'])||0), 0)
+                    gto: advG.reduce((a,c) => a + (parseFloat(c['Gasto Final'])||0), 0)
                 };
                 tree[g][sa][adv] = { mes: m, ...stats };
             });
@@ -491,6 +491,27 @@
                     gTotals.meta += saTotals.meta; gTotals.vt += saTotals.vt; gTotals.uvt += saTotals.uvt;
                     gTotals.bo += saTotals.bo; gTotals.ubo += saTotals.ubo; gTotals.cvt += saTotals.cvt; gTotals.gto += saTotals.gto;
                 });
+
+                // Gerente Total Row
+                const gTotalRow = document.createElement('tr');
+                gTotalRow.className = 'total-row bg-slate-900 border-t-2 border-dark-border';
+                let gTendf = gTotals.vt;
+                const f = { start: document.getElementById('dateStart').value, end: document.getElementById('dateEnd').value };
+                if (f.start && f.end) {
+                    const sd = new Date(f.start); const ed = new Date(f.end);
+                    const d = Math.max(1, (ed - sd)/(1000*3600*24)+1);
+                    gTendf = (gTotals.vt / d) * new Date(sd.getFullYear(), sd.getMonth()+1, 0).getDate();
+                }
+
+                gTotalRow.innerHTML = `
+                    <td class="uppercase font-black text-white">${g} Total</td><td></td><td></td><td></td>
+                    <td>${formatQ(gTotals.meta)}</td><td class="text-trading-green font-black">${formatQ(gTotals.vt)}</td><td>${gTotals.uvt}</td>
+                    <td>${formatQ(gTotals.bo)}</td><td>${gTotals.ubo}</td><td class="font-black">${formatQ(gTotals.vt+gTotals.bo)}</td>
+                    <td>${formatQ(gTendf)}</td><td class="font-black ${gTotals.vt/gTotals.meta >= 0.8 ? 'text-trading-green' : ''}">${gTotals.meta > 0 ? formatP(gTotals.vt/gTotals.meta) : '0%'}</td>
+                    <td>${formatQ(gTotals.cvt)}</td><td>${gTotals.vt > 0 ? formatP((gTotals.vt-gTotals.cvt)/gTotals.vt) : '0%'}</td>
+                    <td>${formatQ(gTotals.gto)}</td>
+                `;
+                body.appendChild(gTotalRow);
             });
         }
 
@@ -500,7 +521,7 @@
             const tBO = bo.reduce((a,c) => a + (parseFloat(c.TPedidoQTZ_FINAL)||0), 0);
             const tUBO = bo.reduce((a,c) => a + (parseFloat(c.BOUNIDAD)||0), 0);
             const tCVT = vt.reduce((a,c) => a + (parseFloat(c.QCOSTO_FINAL)||0), 0);
-            const tGto = gasto.reduce((a,c) => a + (parseFloat(c['Importe gastado Q'])||0), 0);
+            const tGto = gasto.reduce((a,c) => a + (parseFloat(c['Gasto Final'])||0), 0);
             const tMsj = gasto.reduce((a,c) => a + (parseInt(c['Contactos mensajes nuevos'])||0), 0);
             const tMeta = metas.reduce((a,c) => a + (parseFloat(c.META)||0), 0);
 
