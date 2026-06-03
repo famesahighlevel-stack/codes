@@ -1,0 +1,642 @@
+<!DOCTYPE html>
+<html lang="es" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SIN BI - Dashboard DUPAZA</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        dark: {
+                            bg: '#0f172a',
+                            card: '#1e293b',
+                            border: '#334155',
+                            text: '#f1f5f9'
+                        },
+                        trading: {
+                            green: '#22c55e',
+                            red: '#ef4444',
+                            accent: '#3b82f6'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #0f172a;
+            color: #f1f5f9;
+        }
+        .kpi-card {
+            background-color: #1e293b;
+            border: 1px solid #334155;
+            transition: transform 0.2s;
+        }
+        .kpi-card:hover {
+            transform: translateY(-2px);
+            border-color: #475569;
+        }
+        .filter-btn {
+            background-color: #1e293b;
+            border: 1px solid #334155;
+            color: #94a3b8;
+        }
+        .filter-btn.active {
+            background-color: #3b82f6;
+            color: white;
+            border-color: #3b82f6;
+        }
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #0f172a;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #334155;
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #475569;
+        }
+    </style>
+</head>
+<body class="min-h-screen p-4 md:p-8">
+
+    <!-- Header -->
+    <header class="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
+        <div>
+            <h1 class="text-3xl font-bold text-white flex items-center gap-2">
+                <i class="fas fa-chart-line text-trading-green"></i> SIN BI <span class="text-sm font-normal text-slate-400 bg-slate-800 px-2 py-1 rounded">v1.0</span>
+            </h1>
+            <p class="text-slate-400">Automatización de Datos DUPAZA</p>
+        </div>
+
+        <div class="flex flex-wrap gap-3">
+            <label class="flex flex-col">
+                <span class="text-xs text-slate-500 mb-1 ml-1">DATOS (EXCEL INTEGRADO)</span>
+                <input type="file" id="dataFile" class="hidden" accept=".xlsx, .xls">
+                <div onclick="document.getElementById('dataFile').click()" class="cursor-pointer flex items-center gap-2 bg-trading-accent hover:bg-blue-600 text-white px-4 py-2 rounded-lg font-semibold transition shadow-lg">
+                    <i class="fas fa-file-excel"></i> Subir Datos
+                </div>
+            </label>
+            <label class="flex flex-col">
+                <span class="text-xs text-slate-500 mb-1 ml-1">METAS</span>
+                <input type="file" id="metasFile" class="hidden" accept=".xlsx, .xls">
+                <div onclick="document.getElementById('metasFile').click()" class="cursor-pointer flex items-center gap-2 bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded-lg font-semibold transition">
+                    <i class="fas fa-bullseye"></i> Subir Metas
+                </div>
+            </label>
+        </div>
+    </header>
+
+    <!-- Filters Section -->
+    <section class="grid grid-cols-1 md:grid-cols-5 gap-4 mb-8 bg-dark-card p-4 rounded-xl border border-dark-border shadow-2xl">
+        <div class="flex flex-col">
+            <label class="text-xs font-bold text-slate-500 mb-1 uppercase tracking-wider">Rango de Fecha</label>
+            <div class="flex gap-2">
+                <input type="date" id="dateStart" class="bg-dark-bg border border-dark-border text-white text-sm rounded-lg p-2 w-full outline-none focus:border-trading-accent">
+                <input type="date" id="dateEnd" class="bg-dark-bg border border-dark-border text-white text-sm rounded-lg p-2 w-full outline-none focus:border-trading-accent">
+            </div>
+        </div>
+
+        <div class="flex flex-col">
+            <label class="text-xs font-bold text-slate-500 mb-1 uppercase tracking-wider">Gerente</label>
+            <select id="filterGerente" class="bg-dark-bg border border-dark-border text-white text-sm rounded-lg p-2 outline-none focus:border-trading-accent">
+                <option value="all">TODOS</option>
+            </select>
+        </div>
+
+        <div class="flex flex-col">
+            <label class="text-xs font-bold text-slate-500 mb-1 uppercase tracking-wider">Mes</label>
+            <select id="filterMes" class="bg-dark-bg border border-dark-border text-white text-sm rounded-lg p-2 outline-none focus:border-trading-accent">
+                <option value="all">TODOS</option>
+            </select>
+        </div>
+
+        <div class="flex flex-col">
+            <label class="text-xs font-bold text-slate-500 mb-1 uppercase tracking-wider">Asesor</label>
+            <select id="filterAsesor" class="bg-dark-bg border border-dark-border text-white text-sm rounded-lg p-2 outline-none focus:border-trading-accent">
+                <option value="all">TODAS</option>
+            </select>
+        </div>
+
+        <div class="flex flex-col">
+            <label class="text-xs font-bold text-slate-500 mb-1 uppercase tracking-wider">Sub Anillo</label>
+            <select id="filterSubAnillo" class="bg-dark-bg border border-dark-border text-white text-sm rounded-lg p-2 outline-none focus:border-trading-accent">
+                <option value="all">TODOS</option>
+            </select>
+        </div>
+    </section>
+
+    <!-- KPI Grid -->
+    <section class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 mb-8">
+        <!-- Main Sales KPIs -->
+        <div class="kpi-card p-4 rounded-xl flex flex-col justify-between">
+            <span class="text-xs font-semibold text-slate-400 uppercase tracking-tighter">VT (Venta Total)</span>
+            <div class="flex items-baseline gap-1 mt-2">
+                <span class="text-2xl font-bold text-white" id="kpi-vt">Q0.00</span>
+            </div>
+            <div class="text-[10px] text-trading-green mt-1"><i class="fas fa-coins"></i> Total Realizado</div>
+        </div>
+
+        <div class="kpi-card p-4 rounded-xl flex flex-col justify-between">
+            <span class="text-xs font-semibold text-slate-400 uppercase tracking-tighter">UVT (Unidades VT)</span>
+            <span class="text-2xl font-bold text-white mt-2" id="kpi-uvt">0</span>
+            <div class="text-[10px] text-slate-500 mt-1">Unidades Facturadas</div>
+        </div>
+
+        <div class="kpi-card p-4 rounded-xl flex flex-col justify-between border-l-4 border-l-blue-500">
+            <span class="text-xs font-semibold text-slate-400 uppercase tracking-tighter">BO (Backoffice)</span>
+            <span class="text-2xl font-bold text-white mt-2" id="kpi-bo">Q0.00</span>
+            <div class="text-[10px] text-blue-400 mt-1">Pedidos en Proceso</div>
+        </div>
+
+        <div class="kpi-card p-4 rounded-xl flex flex-col justify-between">
+            <span class="text-xs font-semibold text-slate-400 uppercase tracking-tighter">UBO (Unidades BO)</span>
+            <span class="text-2xl font-bold text-white mt-2" id="kpi-ubo">0</span>
+            <div class="text-[10px] text-slate-500 mt-1">Unidades en Pedido</div>
+        </div>
+
+        <div class="kpi-card p-4 rounded-xl bg-slate-800/50 flex flex-col justify-between">
+            <span class="text-xs font-semibold text-trading-green uppercase tracking-tighter">VT + BO Total</span>
+            <span class="text-2xl font-bold text-white mt-2" id="kpi-vt-bo">Q0.00</span>
+            <div class="text-[10px] text-slate-500 mt-1">Venta + Pedidos</div>
+        </div>
+
+        <div class="kpi-card p-4 rounded-xl flex flex-col justify-between">
+            <span class="text-xs font-semibold text-slate-400 uppercase tracking-tighter">UVT + BO Unidades</span>
+            <span class="text-2xl font-bold text-white mt-2" id="kpi-uvt-bo">0</span>
+            <div class="text-[10px] text-slate-500 mt-1">Total Unidades</div>
+        </div>
+
+        <!-- Performance KPIs -->
+        <div class="kpi-card p-4 rounded-xl flex flex-col justify-between border-l-4 border-l-orange-500">
+            <span class="text-xs font-semibold text-slate-400 uppercase tracking-tighter">TENDF (Tendencia)</span>
+            <span class="text-2xl font-bold text-orange-400 mt-2" id="kpi-tendf">Q0.00</span>
+            <div class="text-[10px] text-slate-500 mt-1" id="label-tendf">Proyección Mes</div>
+        </div>
+
+        <div class="kpi-card p-4 rounded-xl flex flex-col justify-between">
+            <span class="text-xs font-semibold text-slate-400 uppercase tracking-tighter">%ALCANF (% Meta)</span>
+            <div class="flex items-center gap-2 mt-2">
+                <span class="text-2xl font-bold text-white" id="kpi-alcanf">0%</span>
+                <div class="w-full bg-slate-700 h-1.5 rounded-full overflow-hidden">
+                    <div id="bar-alcanf" class="bg-trading-green h-full" style="width: 0%"></div>
+                </div>
+            </div>
+            <div class="text-[10px] text-slate-500 mt-1">Sobre Meta VT</div>
+        </div>
+
+        <div class="kpi-card p-4 rounded-xl flex flex-col justify-between">
+            <span class="text-xs font-semibold text-slate-400 uppercase tracking-tighter">CVT (Costo Venta)</span>
+            <span class="text-2xl font-bold text-white mt-2" id="kpi-cvt">Q0.00</span>
+            <div class="text-[10px] text-red-400 mt-1">Costo Mercancía</div>
+        </div>
+
+        <div class="kpi-card p-4 rounded-xl flex flex-col justify-between">
+            <span class="text-xs font-semibold text-slate-400 uppercase tracking-tighter">%MRG (Margen)</span>
+            <span class="text-2xl font-bold text-trading-green mt-2" id="kpi-mrg">0%</span>
+            <div class="text-[10px] text-slate-500 mt-1">(VT-CVT)/VT</div>
+        </div>
+
+        <div class="kpi-card p-4 rounded-xl flex flex-col justify-between border-l-4 border-l-red-500">
+            <span class="text-xs font-semibold text-slate-400 uppercase tracking-tighter">GTO (Gasto FB)</span>
+            <span class="text-2xl font-bold text-white mt-2" id="kpi-gto">Q0.00</span>
+            <div class="text-[10px] text-red-400 mt-1">Inversión Publicitaria</div>
+        </div>
+
+        <div class="kpi-card p-4 rounded-xl flex flex-col justify-between">
+            <span class="text-xs font-semibold text-slate-400 uppercase tracking-tighter">MSJ (Mensajes)</span>
+            <span class="text-2xl font-bold text-white mt-2" id="kpi-msj">0</span>
+            <div class="text-[10px] text-slate-500 mt-1">Contactos Nuevos</div>
+        </div>
+
+        <!-- Efficiency KPIs -->
+        <div class="kpi-card p-4 rounded-xl flex flex-col justify-between">
+            <span class="text-xs font-semibold text-slate-400 uppercase tracking-tighter">%FB VT (Costo/VT)</span>
+            <span class="text-2xl font-bold text-white mt-2" id="kpi-fbvt">0%</span>
+            <div class="text-[10px] text-slate-500 mt-1">Gasto vs Venta</div>
+        </div>
+
+        <div class="kpi-card p-4 rounded-xl flex flex-col justify-between">
+            <span class="text-xs font-semibold text-slate-400 uppercase tracking-tighter">%FBVT+BO</span>
+            <span class="text-2xl font-bold text-white mt-2" id="kpi-fbvtbo">0%</span>
+            <div class="text-[10px] text-slate-500 mt-1">Gasto vs Total</div>
+        </div>
+
+        <div class="kpi-card p-4 rounded-xl flex flex-col justify-between">
+            <span class="text-xs font-semibold text-slate-400 uppercase tracking-tighter">CXMSJ (Costo Lead)</span>
+            <span class="text-2xl font-bold text-white mt-2" id="kpi-cxmsj">Q0.00</span>
+            <div class="text-[10px] text-slate-500 mt-1">Gasto / Mensajes</div>
+        </div>
+
+        <div class="kpi-card p-4 rounded-xl flex flex-col justify-between border-l-4 border-l-trading-green">
+            <span class="text-xs font-semibold text-slate-400 uppercase tracking-tighter">%TCVT (Cierre VT)</span>
+            <span class="text-2xl font-bold text-trading-green mt-2" id="kpi-tcvt">0%</span>
+            <div class="text-[10px] text-slate-500 mt-1">UVT / Mensajes</div>
+        </div>
+
+        <div class="kpi-card p-4 rounded-xl flex flex-col justify-between border-l-4 border-l-trading-green">
+            <span class="text-xs font-semibold text-slate-400 uppercase tracking-tighter">%TCVT+BO (Cierre)</span>
+            <span class="text-2xl font-bold text-trading-green mt-2" id="kpi-tcvtbo">0%</span>
+            <div class="text-[10px] text-slate-500 mt-1">Total U / Mensajes</div>
+        </div>
+    </section>
+
+    <!-- Main Content Area -->
+    <main class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <!-- Chart Section -->
+        <div class="lg:col-span-2 bg-dark-card p-6 rounded-2xl border border-dark-border shadow-xl">
+            <div class="flex justify-between items-center mb-6">
+                <h2 class="text-xl font-bold text-white">Tendencia de Ventas vs Meta</h2>
+                <div class="flex gap-2">
+                    <span class="flex items-center gap-1 text-xs text-slate-400"><div class="w-3 h-3 bg-trading-green rounded-sm"></div> Venta</span>
+                    <span class="flex items-center gap-1 text-xs text-slate-400"><div class="w-3 h-3 bg-blue-500 rounded-sm"></div> Meta</span>
+                </div>
+            </div>
+            <div class="h-[400px]">
+                <canvas id="mainChart"></canvas>
+            </div>
+        </div>
+
+        <!-- Top Performers / Rankings -->
+        <div class="bg-dark-card p-6 rounded-2xl border border-dark-border shadow-xl overflow-hidden">
+            <h2 class="text-xl font-bold text-white mb-6">Ranking por Asesor</h2>
+            <div id="advisorRanking" class="space-y-4 max-h-[400px] overflow-y-auto pr-2">
+                <div class="text-center text-slate-500 mt-10">
+                    <i class="fas fa-info-circle mb-2 text-2xl"></i>
+                    <p>Sube los archivos para ver el ranking</p>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Overlay Loader -->
+    <div id="loader" class="fixed inset-0 bg-dark-bg/80 backdrop-blur-sm flex items-center justify-center z-50 hidden">
+        <div class="flex flex-col items-center">
+            <div class="animate-spin rounded-full h-16 w-16 border-t-4 border-b-4 border-trading-green mb-4"></div>
+            <p class="text-white font-semibold">Procesando datos...</p>
+            <p id="loaderStatus" class="text-slate-400 text-sm mt-2"></p>
+        </div>
+    </div>
+
+    <!-- Script de Lógica -->
+    <script>
+        // -- STATE --
+        let rawData = {
+            vt: [],
+            bo: [],
+            opps: [],
+            gasto: [],
+            metas: []
+        };
+
+        let charts = {};
+
+        // -- HELPERS --
+        const formatQ = (val) => new Intl.NumberFormat('es-GT', { style: 'currency', currency: 'GTQ' }).format(val || 0);
+        const formatN = (val) => new Intl.NumberFormat('es-GT').format(val || 0);
+        const formatP = (val) => (val * 100).toFixed(2) + '%';
+
+        const showLoader = (status) => {
+            document.getElementById('loader').classList.remove('hidden');
+            document.getElementById('loaderStatus').innerText = status || '';
+        };
+        const hideLoader = () => document.getElementById('loader').classList.add('hidden');
+
+        // -- FILE PARSING --
+        document.getElementById('dataFile').addEventListener('change', (e) => handleFile(e, 'data'));
+        document.getElementById('metasFile').addEventListener('change', (e) => handleFile(e, 'metas'));
+
+        async function handleFile(event, type) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            showLoader(`Leyendo ${file.name}...`);
+
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const data = new Uint8Array(e.target.result);
+                const workbook = XLSX.read(data, { type: 'array' });
+
+                if (type === 'data') {
+                    // Mapear hojas según nombres indicados por usuario
+                    // BO_DUP, FACT_VENTAS_REPARTIDO, FACT_OPORTUNIDADES_REPARTIDO, FACT_GASTO_REPARTIDO
+                    workbook.SheetNames.forEach(name => {
+                        const sheetData = XLSX.utils.sheet_to_json(workbook.Sheets[name]);
+                        if (name === 'BO_DUP') rawData.bo = sheetData;
+                        else if (name === 'FACT_VENTAS_REPARTIDO') rawData.vt = sheetData;
+                        else if (name === 'FACT_OPORTUNIDADES_REPARTIDO') rawData.opps = sheetData;
+                        else if (name === 'FACT_GASTO_REPARTIDO') rawData.gasto = sheetData;
+                    });
+                } else {
+                    // Asumir que la primera hoja tiene las metas si no hay una llamada "METAS"
+                    const sheetName = workbook.SheetNames.includes('METAS') ? 'METAS' : workbook.SheetNames[0];
+                    rawData.metas = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName]);
+                }
+
+                hideLoader();
+                initFilters();
+                updateDashboard();
+            };
+            reader.readAsArrayBuffer(file);
+        }
+
+        // -- DASHBOARD LOGIC --
+        function initFilters() {
+            const gerentes = [...new Set(rawData.metas.map(m => m.GERENTE))].filter(Boolean).sort();
+            const meses = [...new Set(rawData.metas.map(m => m.MES))].filter(Boolean).sort((a,b) => a-b);
+            const asesores = [...new Set(rawData.metas.map(m => m.ASESOR || m.VENDEDOR))].filter(Boolean).sort();
+            const subAnillos = [...new Set(rawData.metas.map(m => m['SUB ANILLO']))].filter(Boolean).sort();
+
+            populateSelect('filterGerente', gerentes);
+            populateSelect('filterMes', meses);
+            populateSelect('filterAsesor', asesores);
+            populateSelect('filterSubAnillo', subAnillos);
+        }
+
+        function populateSelect(id, list) {
+            const select = document.getElementById(id);
+            const current = select.value;
+            select.innerHTML = `<option value="all">${id === 'filterAsesor' ? 'TODAS' : 'TODOS'}</option>`;
+            list.forEach(item => {
+                const opt = document.createElement('option');
+                opt.value = item;
+                opt.innerText = item;
+                select.appendChild(opt);
+            });
+            if (list.includes(current)) select.value = current;
+        }
+
+        // Event listeners for filters
+        ['dateStart', 'dateEnd', 'filterGerente', 'filterMes', 'filterAsesor', 'filterSubAnillo'].forEach(id => {
+            document.getElementById(id).addEventListener('change', updateDashboard);
+        });
+
+        function getAdvisorMapping(filters) {
+            // Obtener lista de asesores que pertenecen al gerente seleccionado en metas
+            if (filters.gerente === 'all') return null;
+            return rawData.metas
+                .filter(m => m.GERENTE === filters.gerente)
+                .map(m => m.ASESOR || m.VENDEDOR);
+        }
+
+        function updateDashboard() {
+            const filters = {
+                start: document.getElementById('dateStart').value,
+                end: document.getElementById('dateEnd').value,
+                gerente: document.getElementById('filterGerente').value,
+                mes: document.getElementById('filterMes').value,
+                asesor: document.getElementById('filterAsesor').value,
+                subAnillo: document.getElementById('filterSubAnillo').value
+            };
+
+            const gerenteAdvisors = getAdvisorMapping(filters);
+
+            // Filtrado de Datos
+            const filteredVT = filterDataset(rawData.vt, filters, 'FECHA', 'ASESOR', gerenteAdvisors);
+            const filteredBO = filterDataset(rawData.bo, filters, 'FECHA', 'ASESOR', gerenteAdvisors);
+            const filteredGasto = filterDataset(rawData.gasto, filters, 'Día', 'VENDEDOR', gerenteAdvisors);
+            const filteredMetas = filterMetas(rawData.metas, filters);
+
+            // Cálculos
+            const vt = filteredVT.reduce((acc, row) => acc + (parseFloat(row.QVT_FINAL) || 0), 0);
+            const uvt = filteredVT.reduce((acc, row) => acc + (parseFloat(row.VTUNIDAD) || 0), 0);
+            const bo = filteredBO.reduce((acc, row) => acc + (parseFloat(row.TPedidoQTZ_FINAL) || 0), 0);
+            const ubo = filteredBO.reduce((acc, row) => acc + (parseFloat(row.BOUNIDAD) || 0), 0);
+            const cvt = filteredVT.reduce((acc, row) => acc + (parseFloat(row.QCOSTO_FINAL) || 0), 0);
+
+            // Gasto y Mensajes
+            const gasto = filteredGasto.reduce((acc, row) => acc + (parseFloat(row['Importe gastado Q']) || 0), 0);
+            const msj = filteredGasto.reduce((acc, row) => acc + (parseInt(row['Contactos mensajes nuevos']) || 0), 0);
+
+            const metaVT = filteredMetas.reduce((acc, row) => acc + (parseFloat(row.META) || 0), 0);
+
+            // Tendencia (TENDF)
+            let tendf = 0;
+            let totalDaysInMonth = 30;
+            let daysPassed = 1;
+
+            if (filters.start && filters.end) {
+                const s = new Date(filters.start);
+                const e = new Date(filters.end);
+                daysPassed = Math.max(1, (e - s) / (1000 * 60 * 60 * 24) + 1);
+                totalDaysInMonth = new Date(s.getFullYear(), s.getMonth() + 1, 0).getDate();
+                // Si el rango cruza meses, sumamos los días de esos meses
+                if (s.getMonth() !== e.getMonth() || s.getFullYear() !== e.getFullYear()) {
+                     const monthsCount = (e.getFullYear() - s.getFullYear()) * 12 + (e.getMonth() - s.getMonth()) + 1;
+                     totalDaysInMonth = 0;
+                     for(let i=0; i<monthsCount; i++) {
+                         totalDaysInMonth += new Date(s.getFullYear(), s.getMonth() + 1 + i, 0).getDate();
+                     }
+                }
+            } else {
+                const now = new Date();
+                daysPassed = now.getDate();
+                totalDaysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+            }
+            tendf = (vt / daysPassed) * totalDaysInMonth;
+
+            // Actualizar UI
+            document.getElementById('kpi-vt').innerText = formatQ(vt);
+            document.getElementById('kpi-uvt').innerText = formatN(uvt);
+            document.getElementById('kpi-bo').innerText = formatQ(bo);
+            document.getElementById('kpi-ubo').innerText = formatN(ubo);
+            document.getElementById('kpi-vt-bo').innerText = formatQ(vt + bo);
+            document.getElementById('kpi-uvt-bo').innerText = formatN(uvt + ubo);
+
+            document.getElementById('kpi-tendf').innerText = formatQ(tendf);
+            const alcanf = metaVT > 0 ? (vt / metaVT) : 0;
+            document.getElementById('kpi-alcanf').innerText = formatP(alcanf);
+            document.getElementById('bar-alcanf').style.width = Math.min(100, alcanf * 100) + '%';
+
+            document.getElementById('kpi-cvt').innerText = formatQ(cvt);
+            document.getElementById('kpi-mrg').innerText = vt > 0 ? formatP((vt - cvt) / vt) : '0%';
+
+            document.getElementById('kpi-gto').innerText = formatQ(gto);
+            document.getElementById('kpi-msj').innerText = formatN(msj);
+
+            document.getElementById('kpi-fbvt').innerText = vt > 0 ? formatP(gto / vt) : '0%';
+            document.getElementById('kpi-fbvtbo').innerText = (vt + bo) > 0 ? formatP(gto / (vt + bo)) : '0%';
+            document.getElementById('kpi-cxmsj').innerText = msj > 0 ? formatQ(gto / msj) : 'Q0.00';
+
+            document.getElementById('kpi-tcvt').innerText = msj > 0 ? formatP(uvt / msj) : '0%';
+            document.getElementById('kpi-tcvtbo').innerText = msj > 0 ? formatP((uvt + ubo) / msj) : '0%';
+
+            updateCharts(filteredVT, metaVT, filters);
+            updateRanking(filteredVT, filteredBO);
+        }
+
+        function filterDataset(data, filters, dateCol, advisorCol, gerenteAdvisors) {
+            if (!data) return [];
+            return data.filter(row => {
+                // Fecha
+                if (filters.start && filters.end) {
+                    let rowDate;
+                    if (typeof row[dateCol] === 'number') {
+                        rowDate = new Date((row[dateCol] - 25569) * 86400 * 1000);
+                    } else {
+                        rowDate = new Date(row[dateCol]);
+                    }
+                    if (!isNaN(rowDate.getTime())) {
+                        const s = new Date(filters.start);
+                        const e = new Date(filters.end);
+                        s.setHours(0,0,0,0);
+                        e.setHours(23,59,59,999);
+                        if (rowDate < s || rowDate > e) return false;
+                    }
+                }
+
+                // Gerente Mapping
+                if (gerenteAdvisors) {
+                    const rowAdvisor = row[advisorCol] || row['VENDEDOR'];
+                    if (!gerenteAdvisors.includes(rowAdvisor)) return false;
+                }
+
+                // Asesor / Vendedor
+                if (filters.asesor !== 'all') {
+                    if (row[advisorCol] !== filters.asesor && row['VENDEDOR'] !== filters.asesor) return false;
+                }
+
+                // Sub Anillo
+                if (filters.subAnillo !== 'all') {
+                    if (row['SUB ANILLO'] !== filters.subAnillo && row['1.SUB ANILLO'] !== filters.subAnillo) return false;
+                }
+
+                return true;
+            });
+        }
+
+        function filterMetas(metas, filters) {
+            if (!metas) return [];
+            return metas.filter(row => {
+                if (filters.gerente !== 'all' && row.GERENTE !== filters.gerente) return false;
+                if (filters.mes !== 'all' && row.MES != filters.mes) return false;
+                if (filters.asesor !== 'all' && (row.ASESOR !== filters.asesor && row.VENDEDOR !== filters.asesor)) return false;
+                if (filters.subAnillo !== 'all' && row['SUB ANILLO'] !== filters.subAnillo) return false;
+                return true;
+            });
+        }
+
+        function updateCharts(vtData, totalMetaVal, filters) {
+            const ctx = document.getElementById('mainChart').getContext('2d');
+
+            const groupedVT = {};
+            vtData.forEach(row => {
+                let d;
+                if (typeof row.FECHA === 'number') d = new Date((row.FECHA - 25569) * 86400 * 1000).toISOString().split('T')[0];
+                else if (row.FECHA) d = new Date(row.FECHA).toISOString().split('T')[0];
+                if (d) groupedVT[d] = (groupedVT[d] || 0) + (parseFloat(row.QVT_FINAL) || 0);
+            });
+
+            const labels = Object.keys(groupedVT).sort();
+            const values = labels.map(l => groupedVT[l]);
+
+            // Acumulado
+            let cumulative = 0;
+            const cumulativeValues = values.map(v => {
+                cumulative += v;
+                return cumulative;
+            });
+
+            if (charts.main) charts.main.destroy();
+
+            charts.main = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [
+                        {
+                            label: 'Venta Acumulada',
+                            data: cumulativeValues,
+                            borderColor: '#22c55e',
+                            backgroundColor: 'rgba(34, 197, 94, 0.1)',
+                            fill: true,
+                            tension: 0.3
+                        },
+                        {
+                            label: 'Meta Total',
+                            data: labels.map((_, i) => (totalMetaVal / labels.length) * (i+1)),
+                            borderColor: '#3b82f6',
+                            borderDash: [5, 5],
+                            fill: false,
+                            pointRadius: 0
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: true, labels: { color: '#94a3b8' } }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            grid: { color: '#334155' },
+                            ticks: { color: '#94a3b8', callback: (v) => formatN(v) }
+                        },
+                        x: {
+                            grid: { display: false },
+                            ticks: { color: '#94a3b8' }
+                        }
+                    }
+                }
+            });
+        }
+
+        function updateRanking(vtData, boData) {
+            const container = document.getElementById('advisorRanking');
+            container.innerHTML = '';
+
+            const ranking = {};
+            vtData.forEach(row => {
+                const name = row.ASESOR || row.VENDEDOR || 'Desconocido';
+                if (!ranking[name]) ranking[name] = { vt: 0, bo: 0 };
+                ranking[name].vt += (parseFloat(row.QVT_FINAL) || 0);
+            });
+            boData.forEach(row => {
+                const name = row.ASESOR || row.VENDEDOR || 'Desconocido';
+                if (!ranking[name]) ranking[name] = { vt: 0, bo: 0 };
+                ranking[name].bo += (parseFloat(row.TPedidoQTZ_FINAL) || 0);
+            });
+
+            const sorted = Object.entries(ranking).sort((a, b) => (b[1].vt + b[1].bo) - (a[1].vt + a[1].bo));
+
+            if (sorted.length === 0) {
+                container.innerHTML = '<div class="text-center text-slate-500 mt-10"><p>No hay datos disponibles</p></div>';
+                return;
+            }
+
+            sorted.forEach(([name, totals], index) => {
+                const div = document.createElement('div');
+                div.className = 'flex items-center justify-between p-3 rounded-lg bg-dark-bg border border-dark-border';
+                div.innerHTML = `
+                    <div class="flex items-center gap-3">
+                        <span class="font-bold text-slate-500 w-6">${index + 1}</span>
+                        <div>
+                            <p class="font-semibold text-sm">${name}</p>
+                            <p class="text-[10px] text-slate-400">VT: ${formatQ(totals.vt)} | BO: ${formatQ(totals.bo)}</p>
+                        </div>
+                    </div>
+                    <div class="text-right">
+                        <p class="font-bold text-trading-green">${formatQ(totals.vt + totals.bo)}</p>
+                    </div>
+                `;
+                container.appendChild(div);
+            });
+        }
+    </script>
+</body>
+</html>
