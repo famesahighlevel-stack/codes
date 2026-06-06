@@ -248,14 +248,16 @@ def get_users_by_location(location_id, token, log_callback, acc_name, version="2
     user_map = {}
     user_list = []
     try:
-        # La API de usuarios por locationId suele no soportar limit/skip directamente en algunas versiones,
-        # devolviendo 422. Revertimos a una consulta simple que trae todos los usuarios de la subcuenta.
         url = f"https://services.leadconnectorhq.com/users/?locationId={location_id}"
         headers = {"Authorization": f"Bearer {token}", "Version": version, "Accept": "application/json"}
         r = requests.get(url, headers=headers, timeout=30)
 
+        # Si falla con 2021-07-28, intentamos con la v2 2023-02-21
         if r.status_code != 200:
-            log_callback(f"  [ERROR] No se pudo obtener usuarios para {acc_name} ({r.status_code})")
+            if version == "2021-07-28":
+                return get_users_by_location(location_id, token, log_callback, acc_name, version="2023-02-21")
+
+            log_callback(f"  [ERROR] {acc_name}: {r.status_code} - {r.text[:100]}")
             return user_map, user_list
 
         data = r.json()
