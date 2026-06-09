@@ -751,7 +751,7 @@ function generateHTML(env) {
       } catch(e){}
     }
 
-    function tab(t){ ['dash','create','config'].forEach(v=>{ document.getElementById('tab-'+v).classList.add('hidden'); document.getElementById('nav-'+v).classList.remove('active-tab'); }); document.getElementById('tab-'+t).classList.remove('hidden'); document.getElementById('nav-'+t).classList.add('active-tab'); if(t==='dash') loadDash(); }
+    function tab(t){ ['dash','create','config'].forEach(v=>{ document.getElementById('tab-'+v).classList.add('hidden'); document.getElementById('nav-'+v).classList.remove('active-tab'); }); document.getElementById('tab-'+t).classList.remove('hidden'); document.getElementById('nav-'+t).classList.add('active-tab'); }
 
     async function toggleStatus(id, currentStatus){
       const newStatus = currentStatus === 'ACTIVE' ? 'PAUSED' : 'ACTIVE';
