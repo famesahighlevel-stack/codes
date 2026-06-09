@@ -120,23 +120,41 @@ async function handleGetFullReport(body, env) {
     const acc = env.AD_ACCOUNT_ID;
     const { start, end } = body;
     const time_range = JSON.stringify({ since: start, until: end });
+    const token = env.META_ACCESS_TOKEN;
 
-    const url = `https://graph.facebook.com/${API_VERSION}/${acc}/campaigns?fields=name,status,insights.time_range(${time_range}){spend,impressions,reach,actions},adsets{name,status,insights.time_range(${time_range}){spend,impressions,reach,actions},ads{name,status,creative{thumbnail_url},insights.time_range(${time_range}){spend,impressions,reach,actions}}}&access_token=${env.META_ACCESS_TOKEN}&limit=50`;
+    // We split the request into 3 flatter calls to avoid "reduce amount of data" errors from Meta
+    const campUrl = `https://graph.facebook.com/${API_VERSION}/${acc}/campaigns?fields=name,status,insights.time_range(${time_range}){spend,impressions,reach,actions}&access_token=${token}&limit=100`;
+    const asUrl = `https://graph.facebook.com/${API_VERSION}/${acc}/adsets?fields=name,status,campaign_id,insights.time_range(${time_range}){spend,impressions,reach,actions}&access_token=${token}&limit=150`;
+    const adUrl = `https://graph.facebook.com/${API_VERSION}/${acc}/ads?fields=name,status,adset_id,creative{thumbnail_url},insights.time_range(${time_range}){spend,impressions,reach,actions}&access_token=${token}&limit=300`;
 
-    const r = await fetch(url);
-    const d = await r.json();
+    const [campRes, asRes, adRes] = await Promise.all([
+      fetch(campUrl),
+      fetch(asUrl),
+      fetch(adUrl)
+    ]);
 
-    if (d.error) throw new Error(d.error.message);
+    const campData = await campRes.json();
+    const asData = await asRes.json();
+    const adData = await adRes.json();
 
-    const campaigns = (d.data || []).map(camp => ({
-      ...camp,
-      adsets: (camp.adsets?.data || []).map(as => ({
-        ...as,
-        ads: as.ads?.data || []
-      }))
-    }));
+    if (campData.error) throw new Error(campData.error.message);
 
-    return new Response(JSON.stringify({ data: campaigns }), { headers: { "Content-Type": "application/json" } });
+    const campaigns = campData.data || [];
+    const adsets = asData.data || [];
+    const ads = adData.data || [];
+
+    // Combine data locally
+    const integratedData = campaigns.map(camp => {
+      const campAdsets = adsets
+        .filter(as => as.campaign_id === camp.id)
+        .map(as => {
+          const asAds = ads.filter(ad => ad.adset_id === as.id);
+          return { ...as, ads: asAds };
+        });
+      return { ...camp, adsets: campAdsets };
+    });
+
+    return new Response(JSON.stringify({ data: integratedData }), { headers: { "Content-Type": "application/json" } });
   } catch (e) {
     return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { "Content-Type": "application/json" } });
   }
@@ -287,13 +305,14 @@ async function handleCreateAdvancedAd(formData, env) {
           image_hash: finalMediaId,
           message: finalMsg,
           name: config.headline,
-          call_to_action: { type: 'MESSAGE_PAGE' }
+          call_to_action: { type: 'MESSAGE_PAGE' },
+          link: `https://facebook.com/${config.pageId}`
         };
       } else if (finalMediaType === 'vid') {
         cb.object_story_spec.video_data = {
           video_id: finalMediaId,
           message: finalMsg,
-          call_to_action: { type: 'MESSAGE_PAGE' }
+          call_to_action: { type: 'MESSAGE_PAGE', value: { link: `https://facebook.com/${config.pageId}` } }
         };
       }
 
@@ -592,7 +611,6 @@ function generateHTML(env) {
             <span class="text-xs font-black uppercase">Sube Imagen o Video</span>
             <input type="file" id="fi" class="hidden" onchange="preview(this)">
           </div>
-          <select id="pgs" class="w-full bg-slate-100 border-none rounded-lg p-3 outline-none text-sm font-bold text-slate-700"></select>
           <button onclick="suggestIA()" id="btn-ia" class="w-full bg-gradient-to-r from-indigo-600 to-blue-500 text-white rounded-xl py-3 font-black shadow-lg uppercase text-[11px] tracking-widest">Sugerir con IA ✨</button>
           <textarea id="pt" placeholder="Texto Principal" class="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 outline-none text-sm h-32"></textarea>
           <input type="text" id="hd" placeholder="Título del Anuncio" class="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 outline-none text-sm font-medium">
