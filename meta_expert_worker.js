@@ -673,7 +673,7 @@ function generateHTML(env) {
         DEPTS_GT.forEach(dept => {
           const div = document.createElement('label');
           div.className = 'flex items-center gap-2 bg-slate-100 p-2 rounded cursor-pointer hover:bg-slate-200 transition';
-          div.innerHTML = `<input type="checkbox" value="${dept}" class="dept-check"> <span class="text-[10px] font-bold">${dept}</span>`;
+          div.innerHTML = \`<input type="checkbox" value="\${dept}" class="dept-check"> <span class="text-[10px] font-bold">\${dept}</span>\`;
           dl.appendChild(div);
         });
       } catch(e){}
