@@ -60,14 +60,45 @@ async function handleGetInsights(body, env) {
 }
 
 async function handleGetActiveCampaigns(env) {
-  const r = await fetch(`https://graph.facebook.com/${API_VERSION}/${env.AD_ACCOUNT_ID}/campaigns?fields=name,status,objective&access_token=${env.META_ACCESS_TOKEN}&limit=100`);
+  const r = await fetch(`https://graph.facebook.com/${API_VERSION}/${env.AD_ACCOUNT_ID}/campaigns?fields=name,status,objective,buying_type&access_token=${env.META_ACCESS_TOKEN}&limit=100`);
   const d = await r.json();
   return new Response(JSON.stringify(d), { headers: { "Content-Type": "application/json" } });
 }
 
 async function handleGetAdSets(body, env) {
   const campaignId = body.campaignId;
-  const url = `https://graph.facebook.com/${API_VERSION}/${campaignId}/adsets?fields=name,status&access_token=${env.META_ACCESS_TOKEN}&limit=100`;
+  const url = `https://graph.facebook.com/${API_VERSION}/${campaignId}/adsets?fields=name,status,optimization_goal,billing_event,bid_amount,daily_budget,lifetime_budget,targeting,promoted_object,destination_type&access_token=${env.META_ACCESS_TOKEN}&limit=100`;
+  const r = await fetch(url);
+  const d = await r.json();
+  return new Response(JSON.stringify(d), { headers: { "Content-Type": "application/json" } });
+}
+
+async function handleGetAds(body, env) {
+  const adsetId = body.adsetId;
+  const url = `https://graph.facebook.com/${API_VERSION}/${adsetId}/ads?fields=name,status,creative{id,name,object_story_spec,video_data,link_data}&access_token=${env.META_ACCESS_TOKEN}&limit=100`;
+  const r = await fetch(url);
+  const d = await r.json();
+  return new Response(JSON.stringify(d), { headers: { "Content-Type": "application/json" } });
+}
+
+async function handleGetCustomAudiences(env) {
+  const url = `https://graph.facebook.com/${API_VERSION}/${env.AD_ACCOUNT_ID}/customaudiences?fields=name,description,approximate_count_lower_bound&access_token=${env.META_ACCESS_TOKEN}`;
+  const r = await fetch(url);
+  const d = await r.json();
+  return new Response(JSON.stringify(d), { headers: { "Content-Type": "application/json" } });
+}
+
+async function handleGetInstagramAccounts(body, env) {
+  const pageId = body.pageId;
+  const url = `https://graph.facebook.com/${API_VERSION}/${pageId}?fields=instagram_business_account&access_token=${env.META_ACCESS_TOKEN}`;
+  const r = await fetch(url);
+  const d = await r.json();
+  return new Response(JSON.stringify(d), { headers: { "Content-Type": "application/json" } });
+}
+
+async function handleGetMessageTemplates(body, env) {
+  const pageId = body.pageId;
+  const url = `https://graph.facebook.com/${API_VERSION}/${pageId}/message_templates?access_token=${env.META_ACCESS_TOKEN}`;
   const r = await fetch(url);
   const d = await r.json();
   return new Response(JSON.stringify(d), { headers: { "Content-Type": "application/json" } });
@@ -111,6 +142,22 @@ async function handleGetFullReport(body, env) {
   }
 }
 
+async function resolveRegions(depts, token) {
+  const regions = [];
+  for (const dept of depts) {
+    try {
+      const r = await fetch(`https://graph.facebook.com/${API_VERSION}/search?type=adgeolocation&q=${encodeURIComponent(dept)}&location_types=['region']&access_token=${token}`);
+      const d = await r.json();
+      if (d.data && d.data.length > 0) {
+        // Look for the one that is in GT
+        const match = d.data.find(it => it.country_code === 'GT') || d.data[0];
+        regions.push({ key: match.key });
+      }
+    } catch (e) {}
+  }
+  return regions;
+}
+
 async function handleCreateAdvancedAd(formData, env) {
   const file = formData.get('file');
   const config = JSON.parse(formData.get('config'));
@@ -144,8 +191,9 @@ async function handleCreateAdvancedAd(formData, env) {
       const cr = await fetch(`https://graph.facebook.com/${API_VERSION}/${acc}/campaigns`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          name: `R1.5 ${config.campaignName}`,
+          name: config.campaignName,
           objective: config.objective,
+          buying_type: 'AUCTION',
           status: config.status,
           access_token: token
         })
@@ -157,28 +205,39 @@ async function handleCreateAdvancedAd(formData, env) {
 
     let adSetId = config.adSetId;
     if (adSetId === "NEW") {
+      const destinations = [];
+      if(config.messagingDestinations.messenger) destinations.push('MESSENGER');
+      if(config.messagingDestinations.instagram) destinations.push('INSTAGRAM_DIRECT');
+      if(config.messagingDestinations.whatsapp) destinations.push('WHATSAPP_MESSAGE');
+
       const asb = {
-        name: `FB.R1.5. ${config.campaignName}`,
+        name: config.adSetName,
         campaign_id: campaignId,
-        optimization_goal: 'IMPRESSIONS',
+        optimization_goal: 'CONVERSATIONS',
         billing_event: 'IMPRESSIONS',
+        daily_budget: config.budgetAmount * 100,
+        start_time: config.startDate,
+        destination_type: destinations,
+        promoted_object: { page_id: config.pageId },
         targeting: {
-          geo_locations: config.geoLocations,
-          age_min: parseInt(config.ageMin),
-          age_max: parseInt(config.ageMax),
-          genders: config.genders,
-          flexible_spec: config.interests?.length ? [{ interests: config.interests }] : []
+          geo_locations: { countries: ['GT'] },
+          age_min: parseInt(config.manualAudience.ageMin) || 18,
+          publisher_platforms: Object.keys(config.platforms).filter(p => config.platforms[p]),
+          targeting_automation: { advantage_audience: 1 } // Captar nuevos clientes / Advantage+
         },
         status: config.status,
         access_token: token
       };
-      if (config.budgetType === 'DAILY') asb.daily_budget = config.budgetAmount * 100;
-      else asb.lifetime_budget = config.budgetAmount * 100;
 
-      if (config.objective === 'OUTCOME_MESSAGING') {
-        asb.promoted_object = { page_id: config.pageId };
-        asb.destination_type = ['WHATSAPP_MESSAGE'];
+      if (config.manualAudience.depts && config.manualAudience.depts.length > 0) {
+        const regions = await resolveRegions(config.manualAudience.depts, token);
+        if (regions.length > 0) {
+          asb.targeting.geo_locations.regions = regions;
+          delete asb.targeting.geo_locations.countries;
+        }
       }
+
+      if(config.audienceId) asb.targeting.custom_audiences = [{id: config.audienceId}];
 
       const asr = await fetch(`https://graph.facebook.com/${API_VERSION}/${acc}/adsets`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -190,28 +249,90 @@ async function handleCreateAdvancedAd(formData, env) {
     }
 
     let creativeId;
-    if (mediaId) {
+
+    // If editing and no new media, fetch existing creative details
+    let existingMediaId = null;
+    let existingMediaType = null;
+    if (config.adId !== "NEW" && !mediaId) {
+      const adr = await fetch(`https://graph.facebook.com/${API_VERSION}/${config.adId}?fields=creative{id,object_story_spec}&access_token=${token}`);
+      const adrd = await adr.json();
+      const spec = adrd.creative?.object_story_spec;
+      if (spec) {
+        if (spec.link_data) {
+          existingMediaId = spec.link_data.image_hash;
+          existingMediaType = 'img';
+        } else if (spec.video_data) {
+          existingMediaId = spec.video_data.video_id;
+          existingMediaType = 'vid';
+        }
+      }
+    }
+
+    const finalMediaId = mediaId || existingMediaId;
+    const finalMediaType = mediaType || existingMediaType;
+
+    if (finalMediaId) {
+      const finalMsg = `${config.primaryText}\n\n${FIXED_TEXT}`;
       const cb = {
-        name: "Creative " + Date.now(),
-        object_story_spec: { page_id: config.pageId },
+        name: config.adName + " " + Date.now(),
+        object_story_spec: {
+          page_id: config.pageId,
+          instagram_actor_id: config.instagramId || undefined
+        },
         access_token: token
       };
-      const finalMsg = `${config.primaryText}\n\n${FIXED_TEXT}`;
 
-      if (mediaType === 'img') {
+      if (finalMediaType === 'img') {
         cb.object_story_spec.link_data = {
-          image_hash: mediaId,
+          image_hash: finalMediaId,
           message: finalMsg,
           name: config.headline,
-          call_to_action: { type: 'MESSAGE_PAGE' },
-          link: `https://facebook.com/${config.pageId}`
+          call_to_action: { type: 'MESSAGE_PAGE' }
         };
-      } else {
+      } else if (finalMediaType === 'vid') {
         cb.object_story_spec.video_data = {
-          video_id: mediaId,
+          video_id: finalMediaId,
           message: finalMsg,
-          call_to_action: { type: 'MESSAGE_PAGE', value: { link: `https://facebook.com/${config.pageId}` } }
+          call_to_action: { type: 'MESSAGE_PAGE' }
         };
+      }
+
+      // Message Template Creation
+      if (config.templateId === 'NEW' && config.newTemplate.text) {
+        const templateData = {
+          message_text: config.newTemplate.text,
+          suggestions: config.newTemplate.response ? [{
+            type: "TEXT",
+            text: config.newTemplate.response,
+            payload: "SUGGESTED_RESPONSE"
+          }] : []
+        };
+
+        const tplRes = await fetch(`https://graph.facebook.com/${API_VERSION}/${config.pageId}/message_templates`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: "Template_" + Date.now(),
+            library_template_name: "greeting",
+            template_type: "ICE_BREAKERS",
+            data: templateData,
+            access_token: token
+          })
+        });
+        const tplData = await tplRes.json();
+        if (tplData.id) {
+          if (finalMediaType === 'img') {
+            cb.object_story_spec.link_data.message_template_id = tplData.id;
+          } else if (finalMediaType === 'vid') {
+            cb.object_story_spec.video_data.message_template_id = tplData.id;
+          }
+        }
+      } else if (config.templateId && config.templateId !== 'NEW') {
+        if (finalMediaType === 'img') {
+          cb.object_story_spec.link_data.message_template_id = config.templateId;
+        } else if (finalMediaType === 'vid') {
+          cb.object_story_spec.video_data.message_template_id = config.templateId;
+        }
       }
 
       const ctr = await fetch(`https://graph.facebook.com/${API_VERSION}/${acc}/adcreatives`, {
@@ -223,14 +344,29 @@ async function handleCreateAdvancedAd(formData, env) {
       creativeId = ctrd.id;
     }
 
-    if (creativeId) {
+    if (config.adId !== "NEW") {
+      // Update existing ad
+      const adr = await fetch(`https://graph.facebook.com/${API_VERSION}/${config.adId}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: config.adName,
+          creative: creativeId ? { creative_id: creativeId } : undefined,
+          status: config.status,
+          access_token: token
+        })
+      });
+      const res = await adr.json();
+      if (res.error) throw new Error("Error actualizando anuncio: " + res.error.message);
+      return new Response(JSON.stringify({ success: true, adId: config.adId }), { headers: { "Content-Type": "application/json" } });
+    } else if (creativeId) {
       const adr = await fetch(`https://graph.facebook.com/${API_VERSION}/${acc}/ads`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          name: `${config.campaignName}.C.${config.budgetAmount}`,
+          name: config.adName,
           adset_id: adSetId,
           creative: { creative_id: creativeId },
           status: config.status,
+          degrees_of_freedom_spec: { multi_advertiser_ads_enabled: true },
           access_token: token
         })
       });
@@ -289,61 +425,162 @@ function generateHTML(env) {
       <div class="flex-1 overflow-y-auto space-y-6 pb-20 px-4">
         <div class="card relative">
           <div class="step-num">1</div>
-          <h2 class="text-sm font-black uppercase tracking-widest text-slate-800 mb-6">Producto y Objetivo</h2>
-          <div class="flex gap-4">
-            <input type="text" id="cn" placeholder="Nombre del Producto..." class="flex-1 bg-slate-50 border rounded-lg p-3 outline-none text-lg focus:ring-2 ring-blue-500 font-medium text-slate-700">
-            <select id="ob" class="bg-slate-50 border rounded-lg p-3 outline-none font-bold text-slate-600 cursor-pointer">
-              <option value="OUTCOME_MESSAGING">Mensajes (WS/IG)</option>
-              <option value="OUTCOME_TRAFFIC">Tráfico</option>
-            </select>
+          <h2 class="text-sm font-black uppercase tracking-widest text-slate-800 mb-6">Campaña</h2>
+          <div class="space-y-4">
+            <div>
+              <label class="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Seleccionar Campaña</label>
+              <select id="sel-camp" onchange="loadAdSets(this.value)" class="w-full bg-slate-50 border rounded-lg p-3 text-sm font-bold text-slate-700">
+                <option value="NEW">+ Crear Nueva Campaña</option>
+              </select>
+            </div>
+            <div id="camp-new-config" class="space-y-4">
+              <input type="text" id="cn" placeholder="Nombre de la Nueva Campaña..." class="w-full bg-slate-50 border rounded-lg p-3 outline-none text-lg focus:ring-2 ring-blue-500 font-medium text-slate-700">
+              <div class="grid grid-cols-2 gap-4">
+                <div>
+                  <label class="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Objetivo</label>
+                  <select id="ob" class="w-full bg-slate-50 border rounded-lg p-3 outline-none font-bold text-slate-600 cursor-pointer">
+                    <option value="OUTCOME_ENGAGEMENT">Interacción</option>
+                    <option value="OUTCOME_SALES">Ventas</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Tipo de Compra</label>
+                  <input type="text" value="Subasta" readonly class="w-full bg-slate-100 border rounded-lg p-3 text-sm font-bold text-slate-500">
+                </div>
+              </div>
+            </div>
           </div>
         </div>
 
         <div class="card relative">
           <div class="step-num">2</div>
-          <h2 class="text-sm font-black uppercase tracking-widest text-slate-800 mb-6">Campaña y Conjunto</h2>
-          <div class="grid grid-cols-2 gap-4">
+          <h2 class="text-sm font-black uppercase tracking-widest text-slate-800 mb-6">Conjunto de Anuncios</h2>
+          <div class="space-y-4">
             <div>
-              <label class="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Campaña</label>
-              <select id="sel-camp" onchange="loadAdSets(this.value)" class="w-full bg-slate-50 border rounded-lg p-3 text-sm font-bold text-slate-700">
-                <option value="NEW">+ Crear Nueva Campaña</option>
-              </select>
-            </div>
-            <div>
-              <label class="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Conjunto de Anuncios</label>
-              <select id="sel-adset" class="w-full bg-slate-50 border rounded-lg p-3 text-sm font-bold text-slate-700">
+              <label class="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Seleccionar Conjunto</label>
+              <select id="sel-adset" onchange="loadAds(this.value)" class="w-full bg-slate-50 border rounded-lg p-3 text-sm font-bold text-slate-700">
                 <option value="NEW">+ Crear Nuevo Conjunto</option>
               </select>
+            </div>
+            <div id="adset-new-config" class="space-y-4">
+              <input type="text" id="asn" placeholder="Nombre del Nuevo Conjunto..." class="w-full bg-slate-50 border rounded-lg p-3 outline-none text-sm font-bold text-slate-700">
+
+              <div class="grid grid-cols-2 gap-4">
+                <div>
+                  <label class="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Estrategia Ciclo de Vida</label>
+                  <input type="text" value="Captar nuevos clientes" readonly class="w-full bg-slate-100 border rounded-lg p-3 text-sm font-bold text-slate-500">
+                </div>
+                <div>
+                  <label class="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Ubicación Conversión</label>
+                  <input type="text" value="Destinos mensajes" readonly class="w-full bg-slate-100 border rounded-lg p-3 text-sm font-bold text-slate-500">
+                </div>
+              </div>
+
+              <div class="grid grid-cols-2 gap-4">
+                <div>
+                  <label class="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Destinos de Mensajes</label>
+                  <div class="flex flex-wrap gap-2 mt-2">
+                    <label class="flex items-center gap-1 text-[10px] font-bold"><input type="checkbox" id="dest-msg" checked> Messenger</label>
+                    <label class="flex items-center gap-1 text-[10px] font-bold"><input type="checkbox" id="dest-ig" checked> Instagram</label>
+                    <label class="flex items-center gap-1 text-[10px] font-bold"><input type="checkbox" id="dest-wa" checked> WhatsApp</label>
+                  </div>
+                </div>
+                <div>
+                  <label class="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Objetivo Rendimiento</label>
+                  <input type="text" value="Maximizar conversaciones" readonly class="w-full bg-slate-100 border rounded-lg p-3 text-sm font-bold text-slate-500">
+                </div>
+              </div>
+
+              <div class="grid grid-cols-2 gap-4">
+                <div>
+                  <label class="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Presupuesto Diario (Q)</label>
+                  <input type="number" id="ba" value="250" class="w-full bg-slate-50 border rounded-lg p-3 font-black text-blue-600">
+                </div>
+                <div>
+                  <label class="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Fecha de Inicio</label>
+                  <input type="date" id="sd" class="w-full bg-slate-50 border rounded-lg p-3 text-sm font-bold text-slate-700">
+                </div>
+              </div>
+
+              <div class="space-y-2">
+                <label class="text-[10px] font-bold text-slate-400 uppercase block">Público</label>
+                <select id="sel-audience" class="w-full bg-slate-50 border rounded-lg p-3 text-sm font-bold text-slate-700">
+                  <option value="">+ Crear Público Manual</option>
+                </select>
+                <div id="manual-audience" class="space-y-4 border-t pt-4">
+                  <div>
+                    <label class="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Lugares (Departamentos GT)</label>
+                    <div id="dept-list" class="grid grid-cols-3 gap-2 max-h-40 overflow-y-auto border p-2 rounded"></div>
+                  </div>
+                  <div class="grid grid-cols-2 gap-4">
+                    <div><label class="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Edad Mín</label><input type="number" id="ami" value="18" class="w-full bg-slate-50 border rounded-lg p-3 text-sm"></div>
+                    <div><label class="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Sugerir Público (Intereses)</label><input type="text" id="adsug" placeholder="Ej: Muebles, Decoración..." class="w-full bg-slate-50 border rounded-lg p-3 text-sm"></div>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label class="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Plataformas</label>
+                <div class="flex flex-wrap gap-4 mt-2">
+                  <label class="flex items-center gap-1 text-[10px] font-bold"><input type="checkbox" id="plat-fb" checked> Facebook</label>
+                  <label class="flex items-center gap-1 text-[10px] font-bold"><input type="checkbox" id="plat-ig" checked> Instagram</label>
+                  <label class="flex items-center gap-1 text-[10px] font-bold"><input type="checkbox" id="plat-an" checked> Audience Network</label>
+                  <label class="flex items-center gap-1 text-[10px] font-bold"><input type="checkbox" id="plat-msg" checked> Messenger</label>
+                </div>
+              </div>
             </div>
           </div>
         </div>
 
         <div class="card relative">
           <div class="step-num">3</div>
-          <h2 class="text-sm font-black uppercase tracking-widest text-slate-800 mb-6">Segmentación</h2>
-          <div class="space-y-6">
+          <h2 class="text-sm font-black uppercase tracking-widest text-slate-800 mb-6">Anuncio</h2>
+          <div class="space-y-4">
             <div>
-              <label class="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Lugares</label>
-              <div class="flex gap-2">
-                <input type="text" id="ls" placeholder="Ej: Guatemala..." class="flex-1 bg-slate-50 border rounded-lg p-3 outline-none text-sm">
-                <button onclick="srch('adgeolocation','ls')" class="px-8 py-3 bg-slate-200 hover:bg-slate-300 text-slate-700 font-bold rounded-lg transition text-sm">Buscar</button>
-              </div>
-              <div id="lsel" class="mt-2 text-xs flex flex-wrap gap-1"></div>
+              <label class="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Seleccionar Anuncio (Editar)</label>
+              <select id="sel-ad" onchange="loadAdDetails(this.value)" class="w-full bg-slate-50 border rounded-lg p-3 text-sm font-bold text-slate-700">
+                <option value="NEW">+ Crear Nuevo Anuncio</option>
+              </select>
             </div>
-            <div class="grid grid-cols-3 gap-4">
-              <div><label class="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Edad Mín</label><input type="number" id="ami" value="18" class="w-full bg-slate-50 border rounded-lg p-3 text-sm"></div>
-              <div><label class="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Edad Máx</label><input type="number" id="ama" value="65" class="w-full bg-slate-50 border rounded-lg p-3 text-sm"></div>
-              <div><label class="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Género</label><select id="gn" class="w-full bg-slate-50 border rounded-lg p-3 text-sm"><option value="[1,2]">Todos</option><option value="[1]">Hombres</option><option value="[2]">Mujeres</option></select></div>
-            </div>
-          </div>
-        </div>
+            <div id="ad-config" class="space-y-4">
+              <input type="text" id="ad-name" placeholder="Nombre del Anuncio..." class="w-full bg-slate-50 border rounded-lg p-3 outline-none text-sm font-bold text-slate-700">
 
-        <div class="card relative">
-          <div class="step-num">4</div>
-          <h2 class="text-sm font-black uppercase tracking-widest text-slate-800 mb-6">Presupuesto</h2>
-          <div class="grid grid-cols-2 gap-6">
-            <div><label class="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Tipo</label><select id="bt" class="w-full bg-slate-50 border rounded-lg p-3 font-bold text-sm"><option value="DAILY">Diario</option><option value="LIFETIME">Total</option></select></div>
-            <div><label class="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Monto (Q)</label><input type="number" id="ba" value="250" class="w-full bg-slate-50 border rounded-lg p-3 font-black text-blue-600"></div>
+              <div class="grid grid-cols-2 gap-4">
+                <div>
+                  <label class="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Página de Facebook</label>
+                  <select id="pgs" onchange="updatePageDetails(this.value)" class="w-full bg-slate-50 border rounded-lg p-3 text-sm font-bold text-slate-700"></select>
+                </div>
+                <div>
+                  <label class="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Perfil de Instagram</label>
+                  <select id="sel-ig" class="w-full bg-slate-50 border rounded-lg p-3 text-sm font-bold text-slate-700"></select>
+                </div>
+              </div>
+
+              <div class="grid grid-cols-2 gap-4">
+                <div>
+                  <label class="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Formato</label>
+                  <select id="ad-format" class="w-full bg-slate-50 border rounded-lg p-3 text-sm font-bold text-slate-700">
+                    <option value="SINGLE_IMAGE_OR_VIDEO">Imagen o video único</option>
+                    <option value="CAROUSEL">Secuencia</option>
+                  </select>
+                </div>
+                <div>
+                  <label class="text-[10px] font-bold text-slate-400 uppercase mb-1 block">Anuncios multianunciante</label>
+                  <input type="text" value="Activado" readonly class="w-full bg-slate-100 border rounded-lg p-3 text-sm font-bold text-slate-500">
+                </div>
+              </div>
+
+              <div class="space-y-2">
+                <label class="text-[10px] font-bold text-slate-400 uppercase block">Conversaciones (Plantilla)</label>
+                <select id="sel-template" onchange="this.value === 'NEW' ? document.getElementById('new-template-config').classList.remove('hidden') : document.getElementById('new-template-config').classList.add('hidden')" class="w-full bg-slate-50 border rounded-lg p-3 text-sm font-bold text-slate-700">
+                  <option value="NEW">+ Crear Nueva Plantilla</option>
+                </select>
+                <div id="new-template-config" class="space-y-4 border-t pt-4 hidden">
+                  <input type="text" id="tpl-text" placeholder="Texto de bienvenida..." class="w-full bg-slate-50 border rounded-lg p-3 text-sm">
+                  <input type="text" id="tpl-res" placeholder="Respuesta sugerida..." class="w-full bg-slate-50 border rounded-lg p-3 text-sm">
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -409,6 +646,8 @@ function generateHTML(env) {
 
   <script>
     let locs=[];
+    const DEPTS_GT = ["Alta Verapaz", "Baja Verapaz", "Chimaltenango", "Chiquimula", "El Progreso", "Escuintla", "Guatemala", "Huehuetenango", "Izabal", "Jalapa", "Jutiapa", "Petén", "Quetzaltenango", "Quiché", "Retalhuleu", "Sacatepéquez", "San Marcos", "Santa Rosa", "Sololá", "Suchitepéquez", "Totonicapán", "Zacapa"];
+
     window.onload=async()=>{
       const today = new Date().toISOString().split('T')[0];
       document.getElementById('rep-start').value = today;
@@ -417,24 +656,98 @@ function generateHTML(env) {
         const r=await fetch('/api/get-accounts',{method:'POST'});
         const d=await r.json();
         const s=document.getElementById('pgs');
-        s.innerHTML='<option value="">Página Emisora...</option>';
+        s.innerHTML='<option value="">Página de Facebook...</option>';
         if(d.data) d.data.forEach(p=>s.add(new Option(p.name, p.id)));
 
         const r2=await fetch('/api/get-active-campaigns',{method:'POST'});
         const d2=await r2.json();
         const sc=document.getElementById('sel-camp');
         if(d2.data) d2.data.forEach(c=>sc.add(new Option(c.name, c.id)));
+
+        const r3=await fetch('/api/get-custom-audiences',{method:'POST'});
+        const d3=await r3.json();
+        const sa=document.getElementById('sel-audience');
+        if(d3.data) d3.data.forEach(a=>sa.add(new Option(a.name, a.id)));
+
+        const dl = document.getElementById('dept-list');
+        DEPTS_GT.forEach(dept => {
+          const div = document.createElement('label');
+          div.className = 'flex items-center gap-2 bg-slate-100 p-2 rounded cursor-pointer hover:bg-slate-200 transition';
+          div.innerHTML = `<input type="checkbox" value="${dept}" class="dept-check"> <span class="text-[10px] font-bold">${dept}</span>`;
+          dl.appendChild(div);
+        });
       } catch(e){}
     };
 
     async function loadAdSets(campId){
       const s=document.getElementById('sel-adset');
       s.innerHTML='<option value="NEW">+ Crear Nuevo Conjunto</option>';
-      if(campId === "NEW") return;
+      const campConfig = document.getElementById('camp-new-config');
+      if(campId === "NEW") {
+        campConfig.classList.remove('hidden');
+        return;
+      }
+      campConfig.classList.add('hidden');
       try {
         const r=await fetch('/api/get-adsets',{method:'POST',body:JSON.stringify({campaignId:campId})});
         const d=await r.json();
         if(d.data) d.data.forEach(as=>s.add(new Option(as.name, as.id)));
+      } catch(e){}
+    }
+
+    async function loadAds(adsetId){
+      const s=document.getElementById('sel-ad');
+      s.innerHTML='<option value="NEW">+ Crear Nuevo Anuncio</option>';
+      const adsetConfig = document.getElementById('adset-new-config');
+      if(adsetId === "NEW") {
+        adsetConfig.classList.remove('hidden');
+        return;
+      }
+      adsetConfig.classList.add('hidden');
+      try {
+        const r=await fetch('/api/get-ads',{method:'POST',body:JSON.stringify({adsetId})});
+        const d=await r.json();
+        if(d.data) d.data.forEach(ad=>s.add(new Option(ad.name, ad.id)));
+      } catch(e){}
+    }
+
+    async function loadAdDetails(adId){
+      if(adId === "NEW") {
+        // Reset fields if needed
+        return;
+      }
+      try {
+        const r = await fetch('/api/get-ad-details', {method:'POST', body:JSON.stringify({adId})});
+        const d = await r.json();
+        if(d.data) {
+          // Fill fields for editing
+          document.getElementById('ad-name').value = d.data.name;
+          document.getElementById('pt').value = d.data.creative?.object_story_spec?.link_data?.message || d.data.creative?.object_story_spec?.video_data?.message || "";
+          document.getElementById('hd').value = d.data.creative?.name || "";
+        }
+      } catch(e){}
+    }
+
+    async function updatePageDetails(pageId){
+      if(!pageId) return;
+      try {
+        // Load IG Profiles
+        const r1 = await fetch('/api/get-instagram-accounts', {method:'POST', body:JSON.stringify({pageId})});
+        const d1 = await r1.json();
+        const sig = document.getElementById('sel-ig');
+        sig.innerHTML = '<option value="">Perfil de Instagram...</option>';
+        if(d1.instagram_business_account) {
+          sig.add(new Option(d1.instagram_business_account.name || "Instagram vinculado", d1.instagram_business_account.id));
+        } else {
+          sig.add(new Option("No hay cuenta de IG vinculada", ""));
+        }
+
+        // Load Templates
+        const r2 = await fetch('/api/get-message-templates', {method:'POST', body:JSON.stringify({pageId})});
+        const d2 = await r2.json();
+        const st = document.getElementById('sel-template');
+        st.innerHTML = '<option value="NEW">+ Crear Nueva Plantilla</option>';
+        if(d2.data) d2.data.forEach(t=>st.add(new Option(t.name, t.id)));
       } catch(e){}
     }
 
@@ -595,7 +908,68 @@ function generateHTML(env) {
       }
     }
 
-    async function go(){ document.getElementById('ldr').classList.remove('hidden'); const fd=new FormData(); const f=document.getElementById('fi').files[0]; if(f) fd.append('file',f); const config={campaignId:document.getElementById('sel-camp').value,adSetId:document.getElementById('sel-adset').value,campaignName:document.getElementById('cn').value,objective:document.getElementById('ob').value,budgetType:document.getElementById('bt').value,budgetAmount:document.getElementById('ba').value,ageMin:document.getElementById('ami').value,ageMax:document.getElementById('ama').value,genders:JSON.parse(document.getElementById('gn').value),geoLocations:locs.length?{regions:locs.map(l=>({key:l.key}))}:{countries:['GT']},primaryText:document.getElementById('pt').value,headline:document.getElementById('hd').value,status:'PAUSED',pageId:document.getElementById('pgs').value}; fd.append('config',JSON.stringify(config)); try { const r=await fetch('/api/create-advanced-ad',{method:'POST',body:fd}); const res=await r.json(); if(res.success){ alert('¡ÉXITO! Campaña lanzada (Pausada para revisión). ID: '+res.adId); tab('dash'); loadDash(); } else { alert('ERROR: '+res.error); } } catch(e){ alert('Error fatal'); } finally { document.getElementById('ldr').classList.add('hidden'); } }
+    async function go(){
+      document.getElementById('ldr').classList.remove('hidden');
+      const fd=new FormData();
+      const f=document.getElementById('fi').files[0];
+      if(f) fd.append('file',f);
+
+      const selectedDepts = Array.from(document.querySelectorAll('.dept-check:checked')).map(c => c.value);
+
+      const config={
+        campaignId:document.getElementById('sel-camp').value,
+        campaignName:document.getElementById('cn').value,
+        objective:document.getElementById('ob').value,
+
+        adSetId:document.getElementById('sel-adset').value,
+        adSetName:document.getElementById('asn').value,
+        budgetAmount:document.getElementById('ba').value,
+        startDate:document.getElementById('sd').value,
+        messagingDestinations: {
+          messenger: document.getElementById('dest-msg').checked,
+          instagram: document.getElementById('dest-ig').checked,
+          whatsapp: document.getElementById('dest-wa').checked
+        },
+        audienceId: document.getElementById('sel-audience').value,
+        manualAudience: {
+          depts: selectedDepts,
+          ageMin: document.getElementById('ami').value,
+          interests: document.getElementById('adsug').value
+        },
+        platforms: {
+          facebook: document.getElementById('plat-fb').checked,
+          instagram: document.getElementById('plat-ig').checked,
+          audience_network: document.getElementById('plat-an').checked,
+          messenger: document.getElementById('plat-msg').checked
+        },
+
+        adId: document.getElementById('sel-ad').value,
+        adName: document.getElementById('ad-name').value,
+        pageId: document.getElementById('pgs').value,
+        instagramId: document.getElementById('sel-ig').value,
+        format: document.getElementById('ad-format').value,
+        templateId: document.getElementById('sel-template').value,
+        newTemplate: {
+          text: document.getElementById('tpl-text').value,
+          response: document.getElementById('tpl-res').value
+        },
+        primaryText:document.getElementById('pt').value,
+        headline:document.getElementById('hd').value || document.getElementById('ad-name').value,
+        status:'PAUSED'
+      };
+      fd.append('config',JSON.stringify(config));
+      try {
+        const r=await fetch('/api/create-advanced-ad',{method:'POST',body:fd});
+        const res=await r.json();
+        if(res.success){
+          alert('¡ÉXITO! Operación completada (Pausada para revisión). ID: '+res.adId);
+          tab('dash');
+          loadDash();
+        } else {
+          alert('ERROR: '+res.error);
+        }
+      } catch(e){ alert('Error fatal'); } finally { document.getElementById('ldr').classList.add('hidden'); }
+    }
   </script>
 </body>
 </html>`;
@@ -628,6 +1002,19 @@ export default {
         const b = await request.json();
         return await handleGetAdSets(b, env);
       }
+      if (url.pathname === "/api/get-ads") {
+        const b = await request.json();
+        return await handleGetAds(b, env);
+      }
+      if (url.pathname === "/api/get-custom-audiences") return await handleGetCustomAudiences(env);
+      if (url.pathname === "/api/get-instagram-accounts") {
+        const b = await request.json();
+        return await handleGetInstagramAccounts(b, env);
+      }
+      if (url.pathname === "/api/get-message-templates") {
+        const b = await request.json();
+        return await handleGetMessageTemplates(b, env);
+      }
       if (url.pathname === "/api/update-status") {
         const b = await request.json();
         return await handleUpdateStatus(b, env);
@@ -635,6 +1022,12 @@ export default {
       if (url.pathname === "/api/get-full-report") {
         const b = await request.json();
         return await handleGetFullReport(b, env);
+      }
+      if (url.pathname === "/api/get-ad-details") {
+        const b = await request.json();
+        const r = await fetch(`https://graph.facebook.com/${API_VERSION}/${b.adId}?fields=name,status,creative{id,name,object_story_spec}&access_token=${env.META_ACCESS_TOKEN}`);
+        const d = await r.json();
+        return new Response(JSON.stringify({ data: d }), { headers: { "Content-Type": "application/json" } });
       }
       if (url.pathname === "/api/create-advanced-ad") return await handleCreateAdvancedAd(await request.formData(), env);
     }
