@@ -104,6 +104,66 @@ async function handleGetMessageTemplates(body, env) {
   return new Response(JSON.stringify(d), { headers: { "Content-Type": "application/json" } });
 }
 
+async function handleValidateSetup(env) {
+  const token = env.META_ACCESS_TOKEN;
+  const accId = env.AD_ACCOUNT_ID;
+  const results = {
+    token: { status: 'ok', message: 'Verificando...' },
+    account: { status: 'ok', message: 'Verificando...' },
+    permissions: []
+  };
+
+  try {
+    const pRes = await fetch(`https://graph.facebook.com/${API_VERSION}/me/permissions?access_token=${token}`);
+    const pData = await pRes.json();
+    if (pData.error) {
+      results.token = { status: 'error', message: pData.error.message };
+    } else {
+      results.permissions = pData.data || [];
+      const required = ['ads_management', 'ads_read', 'pages_manage_ads'];
+      const granted = results.permissions.filter(p => p.status === 'granted').map(p => p.permission);
+      const missing = required.filter(req => !granted.includes(req));
+
+      if (missing.length > 0) {
+        results.token = { status: 'warning', message: `Faltan permisos clave: ${missing.join(', ')}` };
+      } else {
+        results.token = { status: 'ok', message: 'Token válido con permisos de administrador.' };
+      }
+    }
+
+    if (accId) {
+      let fullAccId = accId.startsWith('act_') ? accId : 'act_' + accId;
+      const aRes = await fetch(`https://graph.facebook.com/${API_VERSION}/${fullAccId}?fields=account_status,disable_reason,currency&access_token=${token}`);
+      const aData = await aRes.json();
+      if (aData.error) {
+        results.account = { status: 'error', message: aData.error.message };
+      } else {
+        const statuses = { 1: 'ACTIVA', 2: 'DESHABILITADA', 3: 'EN REVISIÓN', 7: 'PENDIENTE CIERRE', 9: 'RESTRINGIDA', 100: 'PREPAGO_VACÍO', 101: 'DEUDA' };
+        results.account = {
+          status: aData.account_status === 1 ? 'ok' : 'error',
+          message: `Cuenta ${statuses[aData.account_status] || 'ID:'+aData.account_status}. Moneda: ${aData.currency}`
+        };
+      }
+    }
+    return new Response(JSON.stringify(results), { headers: { "Content-Type": "application/json" } });
+  } catch (e) {
+    return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { "Content-Type": "application/json" } });
+  }
+}
+
+async function handleCheckPermissions(env) {
+  console.log("Iniciando validación de configuración completa...");
+  return await handleValidateSetup(env);
+}
+
+async function handleGetTokenInfo(env) {
+  console.log("Depurando token de acceso...");
+  const r = await fetch(`https://graph.facebook.com/debug_token?input_token=${env.META_ACCESS_TOKEN}&access_token=${env.META_ACCESS_TOKEN}`);
+  const d = await r.json();
+  console.log("Resultado debug_token:", JSON.stringify(d));
+  return new Response(JSON.stringify(d), { headers: { "Content-Type": "application/json" } });
+}
+
 async function handleUpdateStatus(body, env) {
   const { id, status } = body;
   const r = await fetch(`https://graph.facebook.com/${API_VERSION}/${id}`, {
@@ -160,60 +220,91 @@ async function handleGetFullReport(body, env) {
   }
 }
 
-async function resolveRegions(depts, token) {
+async function handleResolveRegions(body, env) {
+  const depts = body.depts || [];
+  const token = env.META_ACCESS_TOKEN;
+  console.log(`Resolviendo \${depts.length} regiones...`);
   const promises = depts.map(async (dept) => {
     try {
       const r = await fetch(`https://graph.facebook.com/${API_VERSION}/search?type=adgeolocation&q=${encodeURIComponent(dept)}&location_types=['region']&access_token=${token}`);
       const d = await r.json();
       if (d.data && d.data.length > 0) {
         const match = d.data.find(it => it.country_code === 'GT') || d.data[0];
+        console.log(`Región resuelta: \${dept} -> \${match.key}`);
         return { key: match.key };
       }
     } catch (e) {
-      console.error(`Error resolving region ${dept}:`, e);
+      console.error(`Error resolviendo región \${dept}:`, e);
     }
     return null;
   });
   const results = await Promise.all(promises);
-  return results.filter(r => r !== null);
+  return new Response(JSON.stringify({ regions: results.filter(r => r !== null) }), { headers: { "Content-Type": "application/json" } });
 }
 
-async function handleCreateAdvancedAd(formData, env) {
+async function handleUploadMedia(formData, env) {
   const file = formData.get('file');
-  const config = JSON.parse(formData.get('config'));
   const token = env.META_ACCESS_TOKEN;
-  const acc = env.AD_ACCOUNT_ID;
+  let acc = env.AD_ACCOUNT_ID;
+  if (acc && !acc.startsWith('act_')) acc = 'act_' + acc;
 
-  console.log("Iniciando handleCreateAdvancedAd...");
+  console.log(`Iniciando subida de archivo a cuenta \${acc}: \${file.name}`);
 
   try {
-    let mediaId, mediaType;
-    if (file && file.size > 0) {
-      console.log(`Subiendo archivo: ${file.name} (${file.type})...`);
+    if (file.type.startsWith('image')) {
       const ifd = new FormData();
       ifd.append('access_token', token);
-      if (file.type.startsWith('image')) {
-        ifd.append('bytes', file);
-        const r = await fetch(`https://graph.facebook.com/${API_VERSION}/${acc}/adimages`, { method: 'POST', body: ifd });
-        const d = await r.json();
-        if (!d.images) throw new Error("Error subiendo imagen: " + (d.error?.message || JSON.stringify(d)));
-        mediaId = Object.values(d.images)[0].hash;
-        mediaType = 'img';
-        console.log(`Imagen subida exitosamente: ${mediaId}`);
-      } else {
-        ifd.append('source', file);
-        const r = await fetch(`https://graph.facebook.com/${API_VERSION}/${acc}/advideos`, { method: 'POST', body: ifd });
-        const d = await r.json();
-        if (!d.id) throw new Error("Error subiendo video: " + (d.error?.message || JSON.stringify(d)));
-        mediaId = d.id;
-        mediaType = 'vid';
-        console.log(`Video subido exitosamente: ${mediaId}`);
+      ifd.append('bytes', file);
+      const r = await fetch(`https://graph.facebook.com/${API_VERSION}/${acc}/adimages`, { method: 'POST', body: ifd });
+      const d = await r.json();
+      if (!d.images) {
+        console.error("Error AdImages:", JSON.stringify(d));
+        throw new Error(d.error?.message || "Fallo subida de imagen");
       }
+      const hash = Object.values(d.images)[0].hash;
+      console.log(`Imagen subida: \${hash}`);
+      return new Response(JSON.stringify({ id: hash, type: 'img' }), { headers: { "Content-Type": "application/json" } });
+    } else {
+      const vfd = new FormData();
+      vfd.append('access_token', token);
+      vfd.append('source', file);
+      const r = await fetch(`https://graph.facebook.com/${API_VERSION}/${acc}/advideos`, { method: 'POST', body: vfd });
+      const d = await r.json();
+      if (!d.id) {
+        console.error("Error AdVideos:", JSON.stringify(d));
+        throw new Error(d.error?.message || "Fallo subida de video");
+      }
+      console.log(`Video subido: \${d.id}`);
+      return new Response(JSON.stringify({ id: d.id, type: 'vid' }), { headers: { "Content-Type": "application/json" } });
     }
+  } catch (e) {
+    console.error("Error fatal en handleUploadMedia:", e.message);
+    return new Response(JSON.stringify({ error: e.message }), { status: 500, headers: { "Content-Type": "application/json" } });
+  }
+}
+
+async function handleCreateAdvancedAd(body, env) {
+  const config = body.config;
+  const token = env.META_ACCESS_TOKEN;
+  let acc = env.AD_ACCOUNT_ID;
+  if (acc && !acc.startsWith('act_')) acc = 'act_' + acc;
+
+  console.log(`[Worker] Iniciando publicación en cuenta: ${acc}`);
+
+  // Audit permissions again in logs
+  try {
+    const pRes = await fetch(`https://graph.facebook.com/${API_VERSION}/me/permissions?access_token=${token}`);
+    const pData = await pRes.json();
+    console.log(`[Worker] Permisos detectados: ${JSON.stringify(pData.data)}`);
+  } catch(e) { console.error("[Worker] Error verificando permisos internos:", e.message); }
+
+  try {
+    let mediaId = config.mediaId;
+    let mediaType = config.mediaType;
 
     let campaignId = config.campaignId;
     if (campaignId === "NEW") {
-      console.log(`Creando nueva campaña: ${config.campaignName}...`);
+      console.log(`[Worker] Creando campaña: ${config.campaignName}`);
       const cr = await fetch(`https://graph.facebook.com/${API_VERSION}/${acc}/campaigns`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -232,7 +323,7 @@ async function handleCreateAdvancedAd(formData, env) {
 
     let adSetId = config.adSetId;
     if (adSetId === "NEW") {
-      console.log(`Creando nuevo conjunto de anuncios: ${config.adSetName}...`);
+      console.log(`[Worker] Creando AdSet: ${config.adSetName}`);
       const destinations = [];
       if(config.messagingDestinations.messenger) destinations.push('MESSENGER');
       if(config.messagingDestinations.instagram) destinations.push('INSTAGRAM_DIRECT');
@@ -258,13 +349,9 @@ async function handleCreateAdvancedAd(formData, env) {
 
       if (config.startDate) asb.start_time = config.startDate;
 
-      if (config.manualAudience.depts && config.manualAudience.depts.length > 0) {
-        console.log(`Resolviendo regiones para: ${config.manualAudience.depts.join(', ')}...`);
-        const regions = await resolveRegions(config.manualAudience.depts, token);
-        if (regions.length > 0) {
-          asb.targeting.geo_locations.regions = regions;
-          delete asb.targeting.geo_locations.countries;
-        }
+      if (config.resolvedRegions && config.resolvedRegions.length > 0) {
+        asb.targeting.geo_locations.regions = config.resolvedRegions;
+        delete asb.targeting.geo_locations.countries;
       }
 
       if(config.audienceId) asb.targeting.custom_audiences = [{id: config.audienceId}];
@@ -384,7 +471,7 @@ async function handleCreateAdvancedAd(formData, env) {
     }
 
     if (config.adId !== "NEW") {
-      // Update existing ad
+      console.log(`[Worker] Actualizando Anuncio existente: ${config.adId}`);
       const adr = await fetch(`https://graph.facebook.com/${API_VERSION}/${config.adId}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -672,7 +759,10 @@ function generateHTML(env) {
           <div><label class="text-[10px] font-black uppercase text-slate-400">OpenAI Key</label><input type="password" id="ok" placeholder="Key configurada en Environment..." class="w-full border p-3 rounded-lg bg-slate-50"></div>
           <div><label class="text-[10px] font-black uppercase text-slate-400">Ad Account ID</label><input type="text" id="aa" placeholder="ID configurado en Environment..." class="w-full border p-3 rounded-lg bg-slate-50"></div>
           <p class="text-[10px] text-slate-400 font-bold uppercase italic">Los valores se toman de las variables de entorno de Cloudflare para mayor seguridad.</p>
-          <button onclick="alert('Configuración guardada (Local). Use Cloudflare para cambios permanentes.')" class="w-full bg-slate-800 text-white py-4 rounded-xl font-black uppercase tracking-widest text-xs mt-4">Guardar</button>
+          <div class="flex gap-2">
+            <button onclick="checkPerms()" class="flex-1 bg-blue-100 text-blue-700 py-4 rounded-xl font-black uppercase tracking-widest text-xs mt-4 border border-blue-200">Verificar Permisos</button>
+            <button onclick="alert('Configuración guardada (Local). Use Cloudflare para cambios permanentes.')" class="flex-1 bg-slate-800 text-white py-4 rounded-xl font-black uppercase tracking-widest text-xs mt-4">Guardar</button>
+          </div>
         </div>
       </div>
     </div>
@@ -683,7 +773,11 @@ function generateHTML(env) {
       <div class="absolute inset-0 border-4 border-blue-500/20 rounded-full"></div>
       <div class="absolute inset-0 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
     </div>
-    <p class="font-black tracking-widest uppercase text-sm">Sincronizando con Meta...</p>
+    <div class="text-center max-w-sm w-full px-4">
+      <p class="font-black tracking-widest uppercase text-sm mb-2">Sincronizando con Meta...</p>
+      <div id="ldr-log" class="bg-black/40 rounded-lg p-3 text-left font-mono text-[9px] h-32 overflow-y-auto space-y-1 border border-white/10"></div>
+      <p id="ldr-msg" class="mt-2 text-[10px] font-bold text-blue-400 uppercase tracking-tighter opacity-70 animate-pulse">Iniciando proceso...</p>
+    </div>
   </div>
 
   <script>
@@ -701,13 +795,16 @@ function generateHTML(env) {
         s.innerHTML='<option value="">Página de Facebook...</option>';
         if(d.data) d.data.forEach(p=>s.add(new Option(p.name, p.id)));
 
-        const r2=await fetch('/api/get-active-campaigns',{method:'POST'});
+    const [r2, r3] = await Promise.all([
+      fetch('/api/get-active-campaigns',{method:'POST'}),
+      fetch('/api/get-custom-audiences',{method:'POST'})
+    ]);
         const d2=await r2.json();
+    const d3=await r3.json();
+
         const sc=document.getElementById('sel-camp');
         if(d2.data) d2.data.forEach(c=>sc.add(new Option(c.name, c.id)));
 
-        const r3=await fetch('/api/get-custom-audiences',{method:'POST'});
-        const d3=await r3.json();
         const sa=document.getElementById('sel-audience');
         if(d3.data) d3.data.forEach(a=>sa.add(new Option(a.name, a.id)));
 
@@ -950,15 +1047,116 @@ function generateHTML(env) {
       }
     }
 
+    function setLdr(msg){
+      document.getElementById('ldr-msg').innerText = msg;
+      const log = document.getElementById('ldr-log');
+      const entry = document.createElement('div');
+      entry.className = msg.includes('Error') ? 'text-red-400' : 'text-slate-300';
+      entry.innerHTML = `<span class="text-white/30 mr-1">${new Date().toLocaleTimeString()}</span> ${msg}`;
+      log.appendChild(entry);
+      log.scrollTop = log.scrollHeight;
+    }
+
+    async function checkPerms(){
+      const ldr = document.getElementById('ldr');
+      ldr.classList.remove('hidden');
+      setLdr('Analizando Token y Cuenta...');
+
+      try {
+        const [r1, r2] = await Promise.all([
+          fetch('/api/check-permissions', {method:'POST'}),
+          fetch('/api/debug-token', {method:'POST'})
+        ]);
+        const d1 = await r1.json();
+        const d2 = await r2.json();
+
+        let report = "--- REPORTE DE SALUD ---\n\n";
+
+        if(d1.token) report += `TOKEN: \${d1.token.status.toUpperCase()} - \${d1.token.message}\n`;
+        if(d1.account) report += `CUENTA: \${d1.account.status.toUpperCase()} - \${d1.account.message}\n`;
+
+        if(d2.data) {
+          const expires = d2.data.expires_at ? new Date(d2.data.expires_at * 1000).toLocaleString() : "Nunca";
+          report += `EXPIRA: \${expires}\n`;
+          report += `TIPO: \${d2.data.type}\n`;
+        }
+
+        ldr.classList.add('hidden');
+        alert(report);
+      } catch(e) {
+        ldr.classList.add('hidden');
+        alert('Error en verificación: ' + e.message);
+      }
+    }
+
     async function go(){
-      document.getElementById('ldr').classList.remove('hidden');
-      const fd=new FormData();
+      const isNewAd = document.getElementById('sel-ad').value === 'NEW';
       const f=document.getElementById('fi').files[0];
-      if(f) fd.append('file',f);
+      const pageId = document.getElementById('pgs').value;
 
-      const selectedDepts = Array.from(document.querySelectorAll('.dept-check:checked')).map(c => c.value);
+      if(isNewAd && !f) { alert('Debe subir una imagen o video para un anuncio nuevo.'); return; }
+      if(!pageId) { alert('Seleccione una página emisora.'); return; }
 
+      const ldr = document.getElementById('ldr');
+      const log = document.getElementById('ldr-log');
+      log.innerHTML = '';
+      ldr.classList.remove('hidden');
+
+      setLdr('Verificando acceso a Meta...');
+      try {
+        const vr = await fetch('/api/check-permissions', {method:'POST'});
+        const vd = await vr.json();
+        if(vd.token?.status === 'error') throw new Error('Token inválido: ' + vd.token.message);
+        setLdr('Acceso validado correctamente.');
+        if(vd.account?.status === 'error') {
+          setLdr('Aviso de Cuenta: ' + vd.account.message);
+          if(!confirm('Aviso de Cuenta: ' + vd.account.message + '\n¿Desea intentar publicar de todos modos?')) {
+            ldr.classList.add('hidden');
+            return;
+          }
+        }
+      } catch(e) {
+        setLdr('Error de validación: ' + e.message);
+        setTimeout(() => ldr.classList.add('hidden'), 3000);
+        return;
+      }
+
+      let resolvedRegions = [];
+      const depts = Array.from(document.querySelectorAll('.dept-check:checked')).map(c => c.value);
+      if(depts.length > 0) {
+        setLdr(`Resolviendo \${depts.length} ubicaciones en Meta...`);
+        try {
+          const rr = await fetch('/api/resolve-regions', {method:'POST', body:JSON.stringify({depts})});
+          const rd = await rr.json();
+          resolvedRegions = rd.regions || [];
+          setLdr(`Ubicaciones resueltas: \${resolvedRegions.length}`);
+        } catch(e) {
+          setLdr('Error resolviendo ubicaciones: ' + e.message);
+        }
+      }
+
+      let mediaId = null, mediaType = null;
+      if(f) {
+        setLdr(`Subiendo \${f.name} (\${(f.size/1024/1024).toFixed(2)}MB)...`);
+        try {
+          const mfd = new FormData();
+          mfd.append('file', f);
+          const mr = await fetch('/api/upload-media', {method:'POST', body:mfd});
+          const md = await mr.json();
+          if(md.error) throw new Error(md.error);
+          mediaId = md.id;
+          mediaType = md.type;
+          setLdr(`Archivo subido exitosamente ID: \${mediaId}`);
+        } catch(e) {
+          setLdr('Error subiendo archivo: ' + e.message);
+          setTimeout(() => ldr.classList.add('hidden'), 5000);
+          return;
+        }
+      }
+
+      setLdr('Publicando anuncio final en Meta...');
       const config={
+        mediaId, mediaType, resolvedRegions,
         campaignId:document.getElementById('sel-camp').value,
         campaignName:document.getElementById('cn').value,
         objective:document.getElementById('ob').value,
@@ -999,16 +1197,25 @@ function generateHTML(env) {
         headline:document.getElementById('hd').value || document.getElementById('ad-name').value,
         status:'PAUSED'
       };
-      fd.append('config',JSON.stringify(config));
       try {
-        const r=await fetch('/api/create-advanced-ad',{method:'POST',body:fd});
+        const r=await fetch('/api/create-advanced-ad',{
+          method:'POST',
+          headers: {'Content-Type': 'application/json'},
+          body:JSON.stringify({config})
+        });
         const res=await r.json();
         if(res.success){
-          alert('¡ÉXITO! Operación completada (Pausada para revisión). ID: '+res.adId);
-          tab('dash');
-          loadDash();
+          setLdr('¡ÉXITO! Operación completada.');
+          setTimeout(() => {
+            ldr.classList.add('hidden');
+            alert('¡ÉXITO! Campaña/Anuncio listo. ID: ' + res.adId);
+            tab('dash');
+            loadDash();
+          }, 1500);
         } else {
-          alert('ERROR: '+res.error);
+          setLdr('Error Meta: ' + res.error);
+          setTimeout(() => ldr.classList.add('hidden'), 5000);
+          alert('ERROR: ' + res.error);
         }
       } catch(e){ alert('Error fatal'); } finally { document.getElementById('ldr').classList.add('hidden'); }
     }
@@ -1057,6 +1264,8 @@ export default {
         const b = await request.json();
         return await handleGetMessageTemplates(b, env);
       }
+      if (url.pathname === "/api/check-permissions") return await handleCheckPermissions(env);
+      if (url.pathname === "/api/debug-token") return await handleGetTokenInfo(env);
       if (url.pathname === "/api/update-status") {
         const b = await request.json();
         return await handleUpdateStatus(b, env);
@@ -1071,7 +1280,9 @@ export default {
         const d = await r.json();
         return new Response(JSON.stringify({ data: d }), { headers: { "Content-Type": "application/json" } });
       }
-      if (url.pathname === "/api/create-advanced-ad") return await handleCreateAdvancedAd(await request.formData(), env);
+      if (url.pathname === "/api/resolve-regions") return await handleResolveRegions(await request.json(), env);
+      if (url.pathname === "/api/upload-media") return await handleUploadMedia(await request.formData(), env);
+      if (url.pathname === "/api/create-advanced-ad") return await handleCreateAdvancedAd(await request.json(), env);
     }
     return new Response("Not Found", { status: 404 });
   }
