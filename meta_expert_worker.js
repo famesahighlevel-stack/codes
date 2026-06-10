@@ -812,7 +812,7 @@ function generateHTML(env) {
         DEPTS_GT.forEach(dept => {
           const div = document.createElement('label');
           div.className = 'flex items-center gap-2 bg-slate-100 p-2 rounded cursor-pointer hover:bg-slate-200 transition';
-          div.innerHTML = \`<input type="checkbox" value="\${dept}" class="dept-check"> <span class="text-[10px] font-bold">\${dept}</span>\`;
+          div.innerHTML = \\\`<input type="checkbox" value="\\\${dept}" class="dept-check"> <span class="text-[10px] font-bold">\\\${dept}</span>\\\`;
           dl.appendChild(div);
         });
       } catch(e){}
@@ -1052,7 +1052,7 @@ function generateHTML(env) {
       const log = document.getElementById('ldr-log');
       const entry = document.createElement('div');
       entry.className = msg.includes('Error') ? 'text-red-400' : 'text-slate-300';
-      entry.innerHTML = `<span class="text-white/30 mr-1">${new Date().toLocaleTimeString()}</span> ${msg}`;
+      entry.innerHTML = \\\`<span class="text-white/30 mr-1">\\\${new Date().toLocaleTimeString()}</span> \\\${msg}\\\`;
       log.appendChild(entry);
       log.scrollTop = log.scrollHeight;
     }
@@ -1072,13 +1072,13 @@ function generateHTML(env) {
 
         let report = "--- REPORTE DE SALUD ---\n\n";
 
-        if(d1.token) report += `TOKEN: \${d1.token.status.toUpperCase()} - \${d1.token.message}\n`;
-        if(d1.account) report += `CUENTA: \${d1.account.status.toUpperCase()} - \${d1.account.message}\n`;
+        if(d1.token) report += \\\`TOKEN: \\\${d1.token.status.toUpperCase()} - \\\${d1.token.message}\\\\n\\\`;
+        if(d1.account) report += \\\`CUENTA: \\\${d1.account.status.toUpperCase()} - \\\${d1.account.message}\\\\n\\\`;
 
         if(d2.data) {
           const expires = d2.data.expires_at ? new Date(d2.data.expires_at * 1000).toLocaleString() : "Nunca";
-          report += `EXPIRA: \${expires}\n`;
-          report += `TIPO: \${d2.data.type}\n`;
+          report += \\\`EXPIRA: \\\${expires}\\\\n\\\`;
+          report += \\\`TIPO: \\\${d2.data.type}\\\\n\\\`;
         }
 
         ldr.classList.add('hidden');
@@ -1124,12 +1124,12 @@ function generateHTML(env) {
       let resolvedRegions = [];
       const depts = Array.from(document.querySelectorAll('.dept-check:checked')).map(c => c.value);
       if(depts.length > 0) {
-        setLdr(`Resolviendo \${depts.length} ubicaciones en Meta...`);
+        setLdr(\\\`Resolviendo \\\${depts.length} ubicaciones en Meta...\\\`);
         try {
           const rr = await fetch('/api/resolve-regions', {method:'POST', body:JSON.stringify({depts})});
           const rd = await rr.json();
           resolvedRegions = rd.regions || [];
-          setLdr(`Ubicaciones resueltas: \${resolvedRegions.length}`);
+          setLdr(\\\`Ubicaciones resueltas: \\\${resolvedRegions.length}\\\`);
         } catch(e) {
           setLdr('Error resolviendo ubicaciones: ' + e.message);
         }
@@ -1137,7 +1137,7 @@ function generateHTML(env) {
 
       let mediaId = null, mediaType = null;
       if(f) {
-        setLdr(`Subiendo \${f.name} (\${(f.size/1024/1024).toFixed(2)}MB)...`);
+        setLdr(\\\`Subiendo \\\${f.name} (\\\${(f.size/1024/1024).toFixed(2)}MB)...\\\`);
         try {
           const mfd = new FormData();
           mfd.append('file', f);
@@ -1146,7 +1146,7 @@ function generateHTML(env) {
           if(md.error) throw new Error(md.error);
           mediaId = md.id;
           mediaType = md.type;
-          setLdr(`Archivo subido exitosamente ID: \${mediaId}`);
+          setLdr(\\\`Archivo subido exitosamente ID: \\\${mediaId}\\\`);
         } catch(e) {
           setLdr('Error subiendo archivo: ' + e.message);
           setTimeout(() => ldr.classList.add('hidden'), 5000);
