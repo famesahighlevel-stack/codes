@@ -161,19 +161,21 @@ async function handleGetFullReport(body, env) {
 }
 
 async function resolveRegions(depts, token) {
-  const regions = [];
-  for (const dept of depts) {
+  const promises = depts.map(async (dept) => {
     try {
       const r = await fetch(`https://graph.facebook.com/${API_VERSION}/search?type=adgeolocation&q=${encodeURIComponent(dept)}&location_types=['region']&access_token=${token}`);
       const d = await r.json();
       if (d.data && d.data.length > 0) {
-        // Look for the one that is in GT
         const match = d.data.find(it => it.country_code === 'GT') || d.data[0];
-        regions.push({ key: match.key });
+        return { key: match.key };
       }
-    } catch (e) {}
-  }
-  return regions;
+    } catch (e) {
+      console.error(`Error resolving region ${dept}:`, e);
+    }
+    return null;
+  });
+  const results = await Promise.all(promises);
+  return results.filter(r => r !== null);
 }
 
 async function handleCreateAdvancedAd(formData, env) {
@@ -182,30 +184,36 @@ async function handleCreateAdvancedAd(formData, env) {
   const token = env.META_ACCESS_TOKEN;
   const acc = env.AD_ACCOUNT_ID;
 
+  console.log("Iniciando handleCreateAdvancedAd...");
+
   try {
     let mediaId, mediaType;
     if (file && file.size > 0) {
+      console.log(`Subiendo archivo: ${file.name} (${file.type})...`);
       const ifd = new FormData();
       ifd.append('access_token', token);
       if (file.type.startsWith('image')) {
         ifd.append('bytes', file);
         const r = await fetch(`https://graph.facebook.com/${API_VERSION}/${acc}/adimages`, { method: 'POST', body: ifd });
         const d = await r.json();
-        if (!d.images) throw new Error("Error subiendo imagen: " + (d.error?.message || "Desconocido"));
+        if (!d.images) throw new Error("Error subiendo imagen: " + (d.error?.message || JSON.stringify(d)));
         mediaId = Object.values(d.images)[0].hash;
         mediaType = 'img';
+        console.log(`Imagen subida exitosamente: ${mediaId}`);
       } else {
         ifd.append('source', file);
         const r = await fetch(`https://graph.facebook.com/${API_VERSION}/${acc}/advideos`, { method: 'POST', body: ifd });
         const d = await r.json();
-        if (!d.id) throw new Error("Error subiendo video: " + (d.error?.message || "Desconocido"));
+        if (!d.id) throw new Error("Error subiendo video: " + (d.error?.message || JSON.stringify(d)));
         mediaId = d.id;
         mediaType = 'vid';
+        console.log(`Video subido exitosamente: ${mediaId}`);
       }
     }
 
     let campaignId = config.campaignId;
     if (campaignId === "NEW") {
+      console.log(`Creando nueva campaña: ${config.campaignName}...`);
       const cr = await fetch(`https://graph.facebook.com/${API_VERSION}/${acc}/campaigns`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -217,12 +225,14 @@ async function handleCreateAdvancedAd(formData, env) {
         })
       });
       const cd = await cr.json();
-      if (!cd.id) throw new Error("Error creando campaña: " + (cd.error?.message || "Desconocido"));
+      if (!cd.id) throw new Error("Error creando campaña: " + (cd.error?.message || JSON.stringify(cd)));
       campaignId = cd.id;
+      console.log(`Campaña creada: ${campaignId}`);
     }
 
     let adSetId = config.adSetId;
     if (adSetId === "NEW") {
+      console.log(`Creando nuevo conjunto de anuncios: ${config.adSetName}...`);
       const destinations = [];
       if(config.messagingDestinations.messenger) destinations.push('MESSENGER');
       if(config.messagingDestinations.instagram) destinations.push('INSTAGRAM_DIRECT');
@@ -234,7 +244,6 @@ async function handleCreateAdvancedAd(formData, env) {
         optimization_goal: 'CONVERSATIONS',
         billing_event: 'IMPRESSIONS',
         daily_budget: config.budgetAmount * 100,
-        start_time: config.startDate,
         destination_type: destinations,
         promoted_object: { page_id: config.pageId },
         targeting: {
@@ -247,7 +256,10 @@ async function handleCreateAdvancedAd(formData, env) {
         access_token: token
       };
 
+      if (config.startDate) asb.start_time = config.startDate;
+
       if (config.manualAudience.depts && config.manualAudience.depts.length > 0) {
+        console.log(`Resolviendo regiones para: ${config.manualAudience.depts.join(', ')}...`);
         const regions = await resolveRegions(config.manualAudience.depts, token);
         if (regions.length > 0) {
           asb.targeting.geo_locations.regions = regions;
@@ -262,8 +274,9 @@ async function handleCreateAdvancedAd(formData, env) {
         body: JSON.stringify(asb)
       });
       const asrd = await asr.json();
-      if (!asrd.id) throw new Error("Error creando conjunto: " + (asrd.error?.message || "Desconocido"));
+      if (!asrd.id) throw new Error("Error creando conjunto: " + (asrd.error?.message || JSON.stringify(asrd)));
       adSetId = asrd.id;
+      console.log(`Conjunto creado: ${adSetId}`);
     }
 
     let creativeId;
@@ -290,6 +303,7 @@ async function handleCreateAdvancedAd(formData, env) {
     const finalMediaType = mediaType || existingMediaType;
 
     if (finalMediaId) {
+      console.log(`Configurando AdCreative con Media ${finalMediaId}...`);
       const finalMsg = `${config.primaryText}\n\n${FIXED_TEXT}`;
       const cb = {
         name: config.adName + " " + Date.now(),
@@ -318,6 +332,7 @@ async function handleCreateAdvancedAd(formData, env) {
 
       // Message Template Creation
       if (config.templateId === 'NEW' && config.newTemplate.text) {
+        console.log("Creando nueva plantilla de mensaje...");
         const templateData = {
           message_text: config.newTemplate.text,
           suggestions: config.newTemplate.response ? [{
@@ -340,11 +355,14 @@ async function handleCreateAdvancedAd(formData, env) {
         });
         const tplData = await tplRes.json();
         if (tplData.id) {
+          console.log(`Plantilla creada: ${tplData.id}`);
           if (finalMediaType === 'img') {
             cb.object_story_spec.link_data.message_template_id = tplData.id;
           } else if (finalMediaType === 'vid') {
             cb.object_story_spec.video_data.message_template_id = tplData.id;
           }
+        } else {
+          console.warn("Error creando plantilla:", tplData);
         }
       } else if (config.templateId && config.templateId !== 'NEW') {
         if (finalMediaType === 'img') {
@@ -354,13 +372,15 @@ async function handleCreateAdvancedAd(formData, env) {
         }
       }
 
+      console.log("Registrando AdCreative en Meta...");
       const ctr = await fetch(`https://graph.facebook.com/${API_VERSION}/${acc}/adcreatives`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(cb)
       });
       const ctrd = await ctr.json();
-      if (!ctrd.id) throw new Error("Error creando creativo: " + (ctrd.error?.message || "Desconocido"));
+      if (!ctrd.id) throw new Error("Error creando creativo: " + (ctrd.error?.message || JSON.stringify(ctrd)));
       creativeId = ctrd.id;
+      console.log(`AdCreative creado: ${creativeId}`);
     }
 
     if (config.adId !== "NEW") {
@@ -375,9 +395,11 @@ async function handleCreateAdvancedAd(formData, env) {
         })
       });
       const res = await adr.json();
-      if (res.error) throw new Error("Error actualizando anuncio: " + res.error.message);
+      if (res.error) throw new Error("Error actualizando anuncio: " + (res.error.message || JSON.stringify(res.error)));
+      console.log(`Anuncio actualizado: ${config.adId}`);
       return new Response(JSON.stringify({ success: true, adId: config.adId }), { headers: { "Content-Type": "application/json" } });
     } else if (creativeId) {
+      console.log("Creando el anuncio final...");
       const adr = await fetch(`https://graph.facebook.com/${API_VERSION}/${acc}/ads`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -390,11 +412,13 @@ async function handleCreateAdvancedAd(formData, env) {
         })
       });
       const res = await adr.json();
-      if (!res.id) throw new Error("Error creando anuncio: " + (res.error?.message || "Desconocido"));
+      if (!res.id) throw new Error("Error creando anuncio: " + (res.error?.message || JSON.stringify(res.error)));
+      console.log(`Anuncio publicado exitosamente: ${res.id}`);
       return new Response(JSON.stringify({ success: true, adId: res.id }), { headers: { "Content-Type": "application/json" } });
     }
-    return new Response(JSON.stringify({ success: false, error: "Error al generar el anuncio" }), { status: 400 });
+    return new Response(JSON.stringify({ success: false, error: "No se pudo generar el creativo (mediaId faltante)" }), { status: 400 });
   } catch (e) {
+    console.error("Error fatal en handleCreateAdvancedAd:", e);
     return new Response(JSON.stringify({ success: false, error: e.message }), { status: 500 });
   }
 }
