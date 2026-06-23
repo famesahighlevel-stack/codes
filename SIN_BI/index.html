@@ -1,0 +1,579 @@
+<!DOCTYPE html>
+<html lang="es" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SIN BI - Dashboard DUPAZA</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.9.1/chart.min.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        dark: {
+                            bg: '#0f172a',
+                            card: '#1e293b',
+                            border: '#334155',
+                            text: '#f1f5f9'
+                        },
+                        trading: {
+                            green: '#22c55e',
+                            red: '#ef4444',
+                            accent: '#3b82f6'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #0f172a;
+            color: #f1f5f9;
+        }
+        .filter-card {
+            background-color: #1e293b;
+            border: 1px solid #334155;
+        }
+        .box-filter {
+            border: 1px solid #334155;
+            padding: 10px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s;
+            font-size: 11px;
+            text-transform: uppercase;
+            min-width: 100px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #1e293b;
+        }
+        .box-filter.active {
+            border-color: #3b82f6;
+            background: #3b82f620;
+            color: #3b82f6;
+            font-weight: bold;
+        }
+        .data-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 11px;
+        }
+        .data-table th {
+            text-align: left;
+            padding: 8px;
+            background: #334155;
+            color: #94a3b8;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+        }
+        .data-table td {
+            padding: 6px 8px;
+            border-bottom: 1px solid #334155;
+        }
+        .group-header {
+            background: #1e293b;
+            font-weight: 600;
+        }
+        .subgroup-header {
+            background: #1e293b80;
+            font-weight: 500;
+        }
+        .total-row {
+            background: #0f172a;
+            font-weight: bold;
+        }
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #0f172a;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #334155;
+            border-radius: 3px;
+        }
+    </style>
+</head>
+<body class="min-h-screen">
+
+    <div class="p-4 md:p-6 space-y-6">
+        <!-- Header & Top Controls -->
+        <div class="flex justify-between items-center">
+            <h1 class="text-2xl font-bold flex items-center gap-2">
+                <i class="fas fa-microchip text-trading-accent"></i> SIN BI <span class="text-xs font-normal opacity-50 bg-slate-800 px-2 py-1 rounded">v2.0</span>
+            </h1>
+            <div class="flex gap-2">
+                <input type="file" id="dataFile" class="hidden" accept=".xlsx, .xls">
+                <button onclick="document.getElementById('dataFile').click()" class="bg-trading-accent hover:bg-blue-600 px-4 py-2 rounded text-sm font-semibold transition">
+                    <i class="fas fa-file-import mr-1"></i> SUBIR DATOS
+                </button>
+                <input type="file" id="metasFile" class="hidden" accept=".xlsx, .xls">
+                <button onclick="document.getElementById('metasFile').click()" class="bg-slate-700 hover:bg-slate-600 px-4 py-2 rounded text-sm font-semibold transition">
+                    <i class="fas fa-bullseye mr-1"></i> METAS
+                </button>
+            </div>
+        </div>
+
+        <!-- Filters Grid -->
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-4 items-start">
+            <!-- Dates -->
+            <div class="lg:col-span-2 filter-card p-3 rounded-lg space-y-2">
+                <label class="text-[10px] font-bold text-slate-500 uppercase">Date</label>
+                <div class="flex flex-col gap-2">
+                    <input type="date" id="dateStart" class="bg-dark-bg border border-dark-border text-xs rounded p-2 outline-none">
+                    <input type="date" id="dateEnd" class="bg-dark-bg border border-dark-border text-xs rounded p-2 outline-none">
+                </div>
+            </div>
+
+            <!-- Gerente Selector (Boxed Style) -->
+            <div class="lg:col-span-5 filter-card p-3 rounded-lg space-y-2 overflow-hidden">
+                <label class="text-[10px] font-bold text-slate-500 uppercase">Gerente</label>
+                <div id="gerenteContainer" class="flex flex-wrap gap-1">
+                    <div class="box-filter active" data-value="all">TODOS</div>
+                </div>
+            </div>
+
+            <!-- Mes -->
+            <div class="lg:col-span-2 filter-card p-3 rounded-lg space-y-2">
+                <label class="text-[10px] font-bold text-slate-500 uppercase">Mes</label>
+                <select id="filterMes" class="w-full bg-dark-bg border border-dark-border text-xs rounded p-2 outline-none">
+                    <option value="all">Todas</option>
+                </select>
+            </div>
+
+            <!-- Sub Anillo -->
+            <div class="lg:col-span-3 filter-card p-3 rounded-lg space-y-2">
+                <label class="text-[10px] font-bold text-slate-500 uppercase">Sub Anillo</label>
+                <select id="filterSubAnillo" class="w-full bg-dark-bg border border-dark-border text-xs rounded p-2 outline-none">
+                    <option value="all">Todas</option>
+                </select>
+            </div>
+
+            <!-- Asesor -->
+            <div class="lg:col-span-3 filter-card p-3 rounded-lg space-y-2">
+                <label class="text-[10px] font-bold text-slate-500 uppercase">Asesor</label>
+                <select id="filterAsesor" class="w-full bg-dark-bg border border-dark-border text-xs rounded p-2 outline-none">
+                    <option value="all">Todas</option>
+                </select>
+            </div>
+        </div>
+
+        <!-- Hierarchical Data Table -->
+        <div class="bg-dark-card rounded-lg border border-dark-border overflow-hidden shadow-2xl">
+            <div class="overflow-x-auto max-h-[500px]">
+                <table class="data-table" id="mainDataTable">
+                    <thead>
+                        <tr>
+                            <th>Gerente</th>
+                            <th>Sub Anillo</th>
+                            <th>Mes</th>
+                            <th>Vendedor</th>
+                            <th>Meta</th>
+                            <th>VT</th>
+                            <th>UVT</th>
+                            <th>BO</th>
+                            <th>UBO</th>
+                            <th>VT + BO</th>
+                            <th>TENDF</th>
+                            <th>%ALCANF</th>
+                            <th>CVT</th>
+                            <th>%MRG</th>
+                            <th>GTO</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tableBody">
+                        <!-- JS injected -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Bottom Dashboard: Gauge + Key Stats -->
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-center bg-dark-card p-6 rounded-xl border border-dark-border">
+            <!-- Gauge Chart -->
+            <div class="lg:col-span-3 flex flex-col items-center">
+                <span class="text-xs font-bold text-slate-400 mb-2 uppercase tracking-widest">Venta x Meta Mes</span>
+                <div class="relative w-full h-[150px]">
+                    <canvas id="gaugeChart"></canvas>
+                    <div class="absolute inset-0 flex flex-col items-center justify-end pb-2">
+                        <span id="gaugeValue" class="text-xl font-bold">Q0.00</span>
+                        <span id="gaugeTarget" class="text-[10px] text-slate-500">Goal: Q0.00</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Big Stats Grid -->
+            <div class="lg:col-span-9 grid grid-cols-2 md:grid-cols-4 gap-8">
+                <div class="flex flex-col">
+                    <span class="text-[28px] font-bold text-white" id="stat-ppu">Q0.00</span>
+                    <span class="text-[11px] text-slate-500 font-bold uppercase">PPU</span>
+                </div>
+                <div class="flex flex-col">
+                    <span class="text-[28px] font-bold text-white" id="stat-vtbo">Q0.00</span>
+                    <span class="text-[11px] text-slate-500 font-bold uppercase">VT+BO</span>
+                </div>
+                <div class="flex flex-col">
+                    <span class="text-[28px] font-bold text-white" id="stat-tcvt">0.00%</span>
+                    <span class="text-[11px] text-slate-500 font-bold uppercase">%TCVT+BO</span>
+                </div>
+                <div class="flex flex-col">
+                    <span class="text-[28px] font-bold text-white" id="stat-cxmsj">Q0.00</span>
+                    <span class="text-[11px] text-slate-500 font-bold uppercase">CXMSJ</span>
+                </div>
+                <div class="flex flex-col">
+                    <span class="text-[28px] font-bold text-white" id="stat-fb">0.00%</span>
+                    <span class="text-[11px] text-slate-500 font-bold uppercase">%FB</span>
+                </div>
+                <div class="flex flex-col">
+                    <span class="text-[28px] font-bold text-white" id="stat-mrg">0.00%</span>
+                    <span class="text-[11px] text-slate-500 font-bold uppercase">%MRG</span>
+                </div>
+                <div class="flex flex-col">
+                    <span class="text-[28px] font-bold text-white" id="stat-tendf">Q0.00</span>
+                    <span class="text-[11px] text-slate-500 font-bold uppercase">TENDF</span>
+                </div>
+                <div class="flex flex-col">
+                    <span class="text-[28px] font-bold text-white" id="stat-leads">0</span>
+                    <span class="text-[11px] text-slate-500 font-bold uppercase">Leads</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loader -->
+    <div id="loader" class="fixed inset-0 bg-dark-bg/80 backdrop-blur-sm flex items-center justify-center z-50 hidden">
+        <div class="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-trading-accent"></div>
+    </div>
+
+    <script>
+        // State
+        let rawData = { vt: [], bo: [], gasto: [], metas: [] };
+        let activeGerente = 'all';
+        let gaugeObj = null;
+
+        const formatQ = (v) => new Intl.NumberFormat('es-GT', { style: 'currency', currency: 'GTQ', maximumFractionDigits: 0 }).format(v || 0);
+        const formatN = (v) => new Intl.NumberFormat('es-GT').format(v || 0);
+        const formatP = (v) => (v * 100).toFixed(2) + '%';
+
+        // File Loading
+        document.getElementById('dataFile').addEventListener('change', e => handleFile(e, 'data'));
+        document.getElementById('metasFile').addEventListener('change', e => handleFile(e, 'metas'));
+
+        async function handleFile(e, type) {
+            const file = e.target.files[0];
+            if (!file) return;
+            document.getElementById('loader').classList.remove('hidden');
+
+            const reader = new FileReader();
+            reader.onload = (ev) => {
+                const data = new Uint8Array(ev.target.result);
+                const wb = XLSX.read(data, { type: 'array' });
+                if (type === 'data') {
+                    wb.SheetNames.forEach(n => {
+                        const s = XLSX.utils.sheet_to_json(wb.Sheets[n]);
+                        if (n === 'BO_DUP') rawData.bo = s;
+                        else if (n === 'FACT_VENTAS_REPARTIDO') rawData.vt = s;
+                        else if (n === 'FACT_GASTO_REPARTIDO') rawData.gasto = s;
+                    });
+                } else {
+                    rawData.metas = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]);
+                }
+                document.getElementById('loader').classList.add('hidden');
+                initUI();
+                updateDashboard();
+            };
+            reader.readAsArrayBuffer(file);
+        }
+
+        function initUI() {
+            // Gerente Boxes
+            const gerentes = [...new Set(rawData.metas.map(m => m.GERENTE))].filter(Boolean).sort();
+            const container = document.getElementById('gerenteContainer');
+            container.innerHTML = `<div class="box-filter ${activeGerente === 'all' ? 'active' : ''}" data-value="all">TODOS</div>`;
+            gerentes.forEach(g => {
+                const el = document.createElement('div');
+                el.className = `box-filter ${activeGerente === g ? 'active' : ''}`;
+                el.dataset.value = g;
+                el.innerText = g || '(En blanco)';
+                el.onclick = () => {
+                    document.querySelectorAll('.box-filter').forEach(b => b.classList.remove('active'));
+                    el.classList.add('active');
+                    activeGerente = g;
+                    updateDashboard();
+                };
+                container.appendChild(el);
+            });
+
+            // Other filters
+            populate('filterMes', [...new Set(rawData.metas.map(m => m.MES))].filter(Boolean).sort((a,b)=>a-b));
+            populate('filterSubAnillo', [...new Set(rawData.metas.map(m => m['SUB ANILLO']))].filter(Boolean).sort());
+            populate('filterAsesor', [...new Set(rawData.metas.map(m => m.ASESOR || m.VENDEDOR))].filter(Boolean).sort());
+        }
+
+        function populate(id, list) {
+            const el = document.getElementById(id);
+            el.innerHTML = '<option value="all">Todas</option>';
+            list.forEach(i => {
+                const o = document.createElement('option');
+                o.value = o.innerText = i;
+                el.appendChild(o);
+            });
+        }
+
+        // Listeners
+        ['dateStart', 'dateEnd', 'filterMes', 'filterSubAnillo', 'filterAsesor'].forEach(id => {
+            document.getElementById(id).addEventListener('change', updateDashboard);
+        });
+
+        function updateDashboard() {
+            const filters = {
+                start: document.getElementById('dateStart').value,
+                end: document.getElementById('dateEnd').value,
+                gerente: activeGerente,
+                mes: document.getElementById('filterMes').value,
+                subAnillo: document.getElementById('filterSubAnillo').value,
+                asesor: document.getElementById('filterAsesor').value
+            };
+
+            const advisors = filters.gerente === 'all' ? null : rawData.metas.filter(m => m.GERENTE === filters.gerente).map(m => m.ASESOR || m.VENDEDOR);
+
+            const fVT = filter(rawData.vt, filters, 'FECHA', 'ASESOR', advisors);
+            const fBO = filter(rawData.bo, filters, 'FECHA', 'ASESOR', advisors);
+            const fGasto = filter(rawData.gasto, filters, 'Día', 'VENDEDOR', advisors);
+            const fMetas = filterMetas(rawData.metas, filters);
+
+            renderTable(fVT, fBO, fGasto, fMetas);
+            updateBottomStats(fVT, fBO, fGasto, fMetas, filters);
+        }
+
+        function filter(data, f, dateCol, advCol, validAdvisors) {
+            return data.filter(r => {
+                if (f.start && f.end) {
+                    let rd = typeof r[dateCol] === 'number' ? new Date((r[dateCol]-25569)*86400*1000) : new Date(r[dateCol]);
+                    if (!isNaN(rd)) {
+                        const s = new Date(f.start); s.setHours(0,0,0,0);
+                        const e = new Date(f.end); e.setHours(23,59,59,999);
+                        if (rd < s || rd > e) return false;
+                    }
+                }
+                const adv = r[advCol] || r['VENDEDOR'] || r['AsesorFinal'];
+                if (validAdvisors && !validAdvisors.includes(adv)) return false;
+                if (f.asesor !== 'all' && adv !== f.asesor) return false;
+                if (f.subAnillo !== 'all' && (r['SUB ANILLO'] !== f.subAnillo && r['1.SUB ANILLO'] !== f.subAnillo)) return false;
+                return true;
+            });
+        }
+
+        function filterMetas(metas, f) {
+            return metas.filter(r => {
+                if (f.gerente !== 'all' && r.GERENTE !== f.gerente) return false;
+                if (f.mes !== 'all' && r.MES != f.mes) return false;
+                if (f.asesor !== 'all' && (r.ASESOR !== f.asesor && r.VENDEDOR !== f.asesor)) return false;
+                if (f.subAnillo !== 'all' && r['SUB ANILLO'] !== f.subAnillo) return false;
+                return true;
+            });
+        }
+
+        function renderTable(vt, bo, gasto, metas) {
+            const body = document.getElementById('tableBody');
+            body.innerHTML = '';
+
+            // Group by Gerente -> SubAnillo -> Vendedor
+            const tree = {};
+            const allAdvisors = new Set([...vt.map(r=>r.ASESOR||r.VENDEDOR), ...bo.map(r=>r.ASESOR||r.VENDEDOR), ...metas.map(r=>r.ASESOR||r.VENDEDOR)]);
+
+            allAdvisors.forEach(adv => {
+                const metaRow = metas.find(m => m.ASESOR === adv || m.VENDEDOR === adv);
+                const g = metaRow ? metaRow.GERENTE : 'OTROS';
+                const sa = metaRow ? metaRow['SUB ANILLO'] : 'S/A';
+                const m = metaRow ? metaRow.MES : '-';
+
+                if (!tree[g]) tree[g] = {};
+                if (!tree[g][sa]) tree[g][sa] = {};
+
+                const advVT = vt.filter(r => (r.ASESOR||r.VENDEDOR) === adv);
+                const advBO = bo.filter(r => (r.ASESOR||r.VENDEDOR) === adv);
+                const advG = gasto.filter(r => (r.AsesorFinal || r.VENDEDOR) === adv);
+
+                const stats = {
+                    meta: metaRow ? (parseFloat(metaRow.META) || 0) : 0,
+                    vt: advVT.reduce((a,c) => a + (parseFloat(c.QVT_FINAL)||0), 0),
+                    uvt: advVT.reduce((a,c) => a + (parseFloat(c.VTUNIDAD)||0), 0),
+                    bo: advBO.reduce((a,c) => a + (parseFloat(c.TPedidoQTZ_FINAL)||0), 0),
+                    ubo: advBO.reduce((a,c) => a + (parseFloat(c.BOUNIDAD)||0), 0),
+                    cvt: advVT.reduce((a,c) => a + (parseFloat(c.QCOSTO_FINAL)||0), 0),
+                    gto: advG.reduce((a,c) => a + (parseFloat(c['Gasto Final'])||0), 0)
+                };
+                tree[g][sa][adv] = { mes: m, ...stats };
+            });
+
+            // Iterate tree
+            Object.keys(tree).sort().forEach(g => {
+                const gRow = document.createElement('tr');
+                gRow.className = 'group-header';
+                gRow.innerHTML = `<td colspan="15"><i class="fas fa-chevron-down mr-2 opacity-50"></i> ${g}</td>`;
+                body.appendChild(gRow);
+
+                let gTotals = { meta:0, vt:0, uvt:0, bo:0, ubo:0, cvt:0, gto:0 };
+
+                Object.keys(tree[g]).sort().forEach(sa => {
+                    const saRow = document.createElement('tr');
+                    saRow.className = 'subgroup-header';
+                    saRow.innerHTML = `<td></td><td colspan="14">${sa}</td>`;
+                    body.appendChild(saRow);
+
+                    let saTotals = { meta:0, vt:0, uvt:0, bo:0, ubo:0, cvt:0, gto:0 };
+
+                    Object.keys(tree[g][sa]).sort().forEach(adv => {
+                        const s = tree[g][sa][adv];
+                        saTotals.meta += s.meta; saTotals.vt += s.vt; saTotals.uvt += s.uvt;
+                        saTotals.bo += s.bo; saTotals.ubo += s.ubo; saTotals.cvt += s.cvt; saTotals.gto += s.gto;
+
+                        // Row-level Tendency
+                        let rTendf = s.vt;
+                        const filters = {
+                            start: document.getElementById('dateStart').value,
+                            end: document.getElementById('dateEnd').value
+                        };
+                        if (filters.start && filters.end) {
+                            const sd = new Date(filters.start); const ed = new Date(filters.end);
+                            const d = Math.max(1, (ed - sd)/(1000*3600*24)+1);
+                            const tm = new Date(sd.getFullYear(), sd.getMonth()+1, 0).getDate();
+                            rTendf = (s.vt / d) * tm;
+                        }
+
+                        const row = document.createElement('tr');
+                        row.innerHTML = `
+                            <td></td><td></td><td>${s.mes}</td><td>${adv}</td>
+                            <td class="text-slate-400">${formatQ(s.meta)}</td><td class="font-medium">${formatQ(s.vt)}</td><td>${s.uvt}</td>
+                            <td>${formatQ(s.bo)}</td><td>${s.ubo}</td><td class="font-bold">${formatQ(s.vt+s.bo)}</td>
+                            <td>${formatQ(rTendf)}</td>
+                            <td class="font-bold ${s.vt/s.meta >= 1 ? 'text-trading-green' : ''}">${s.meta > 0 ? formatP(s.vt/s.meta) : '0%'}</td>
+                            <td>${formatQ(s.cvt)}</td><td>${s.vt > 0 ? formatP((s.vt-s.cvt)/s.vt) : '0%'}</td>
+                            <td>${formatQ(s.gto)}</td>
+                        `;
+                        body.appendChild(row);
+                    });
+
+                    // Subtotal Row
+                    const tRow = document.createElement('tr');
+                    tRow.className = 'total-row';
+                    let saTendf = saTotals.vt;
+                    const f = { start: document.getElementById('dateStart').value, end: document.getElementById('dateEnd').value };
+                    if (f.start && f.end) {
+                        const sd = new Date(f.start); const ed = new Date(f.end);
+                        const d = Math.max(1, (ed - sd)/(1000*3600*24)+1);
+                        saTendf = (saTotals.vt / d) * new Date(sd.getFullYear(), sd.getMonth()+1, 0).getDate();
+                    }
+
+                    tRow.innerHTML = `
+                        <td></td><td></td><td></td><td class="uppercase">Total</td>
+                        <td>${formatQ(saTotals.meta)}</td><td class="text-trading-green">${formatQ(saTotals.vt)}</td><td>${saTotals.uvt}</td>
+                        <td>${formatQ(saTotals.bo)}</td><td>${saTotals.ubo}</td><td>${formatQ(saTotals.vt+saTotals.bo)}</td>
+                        <td>${formatQ(saTendf)}</td><td class="${saTotals.vt/saTotals.meta >= 0.8 ? 'text-trading-green' : ''}">${saTotals.meta > 0 ? formatP(saTotals.vt/saTotals.meta) : '0%'}</td>
+                        <td>${formatQ(saTotals.cvt)}</td><td>${saTotals.vt > 0 ? formatP((saTotals.vt-saTotals.cvt)/saTotals.vt) : '0%'}</td>
+                        <td>${formatQ(saTotals.gto)}</td>
+                    `;
+                    body.appendChild(tRow);
+
+                    gTotals.meta += saTotals.meta; gTotals.vt += saTotals.vt; gTotals.uvt += saTotals.uvt;
+                    gTotals.bo += saTotals.bo; gTotals.ubo += saTotals.ubo; gTotals.cvt += saTotals.cvt; gTotals.gto += saTotals.gto;
+                });
+
+                // Gerente Total Row
+                const gTotalRow = document.createElement('tr');
+                gTotalRow.className = 'total-row bg-slate-900 border-t-2 border-dark-border';
+                let gTendf = gTotals.vt;
+                const f = { start: document.getElementById('dateStart').value, end: document.getElementById('dateEnd').value };
+                if (f.start && f.end) {
+                    const sd = new Date(f.start); const ed = new Date(f.end);
+                    const d = Math.max(1, (ed - sd)/(1000*3600*24)+1);
+                    gTendf = (gTotals.vt / d) * new Date(sd.getFullYear(), sd.getMonth()+1, 0).getDate();
+                }
+
+                gTotalRow.innerHTML = `
+                    <td class="uppercase font-black text-white">${g} Total</td><td></td><td></td><td></td>
+                    <td>${formatQ(gTotals.meta)}</td><td class="text-trading-green font-black">${formatQ(gTotals.vt)}</td><td>${gTotals.uvt}</td>
+                    <td>${formatQ(gTotals.bo)}</td><td>${gTotals.ubo}</td><td class="font-black">${formatQ(gTotals.vt+gTotals.bo)}</td>
+                    <td>${formatQ(gTendf)}</td><td class="font-black ${gTotals.vt/gTotals.meta >= 0.8 ? 'text-trading-green' : ''}">${gTotals.meta > 0 ? formatP(gTotals.vt/gTotals.meta) : '0%'}</td>
+                    <td>${formatQ(gTotals.cvt)}</td><td>${gTotals.vt > 0 ? formatP((gTotals.vt-gTotals.cvt)/gTotals.vt) : '0%'}</td>
+                    <td>${formatQ(gTotals.gto)}</td>
+                `;
+                body.appendChild(gTotalRow);
+            });
+        }
+
+        function updateBottomStats(vt, bo, gasto, metas, f) {
+            const tVT = vt.reduce((a,c) => a + (parseFloat(c.QVT_FINAL)||0), 0);
+            const tUVT = vt.reduce((a,c) => a + (parseFloat(c.VTUNIDAD)||0), 0);
+            const tBO = bo.reduce((a,c) => a + (parseFloat(c.TPedidoQTZ_FINAL)||0), 0);
+            const tUBO = bo.reduce((a,c) => a + (parseFloat(c.BOUNIDAD)||0), 0);
+            const tCVT = vt.reduce((a,c) => a + (parseFloat(c.QCOSTO_FINAL)||0), 0);
+            const tGto = gasto.reduce((a,c) => a + (parseFloat(c['Gasto Final'])||0), 0);
+            const tMsj = gasto.reduce((a,c) => a + (parseInt(c['Contactos mensajes nuevos'])||0), 0);
+            const tMeta = metas.reduce((a,c) => a + (parseFloat(c.META)||0), 0);
+
+            // Tendencia
+            let tendf = 0;
+            if (f.start && f.end) {
+                const s = new Date(f.start); const e = new Date(f.end);
+                const days = Math.max(1, (e - s)/(1000*3600*24)+1);
+                const totalM = new Date(s.getFullYear(), s.getMonth()+1, 0).getDate();
+                tendf = (tVT / days) * totalM;
+            } else {
+                const n = new Date(); tendf = (tVT / n.getDate()) * new Date(n.getFullYear(), n.getMonth()+1, 0).getDate();
+            }
+
+            document.getElementById('stat-vtbo').innerText = formatQ(tVT + tBO);
+            document.getElementById('stat-ppu').innerText = (tUVT+tUBO) > 0 ? formatQ((tVT+tBO)/(tUVT+tUBO)) : 'Q0.00';
+            document.getElementById('stat-tcvt').innerText = tMsj > 0 ? formatP((tUVT+tUBO)/tMsj) : '0.00%';
+            document.getElementById('stat-cxmsj').innerText = tMsj > 0 ? formatQ(tGto/tMsj) : 'Q0.00';
+            document.getElementById('stat-fb').innerText = tVT > 0 ? formatP(tGto/tVT) : '0.00%';
+            document.getElementById('stat-mrg').innerText = tVT > 0 ? formatP((tVT-tCVT)/tVT) : '0.00%';
+            document.getElementById('stat-tendf').innerText = formatQ(tendf);
+            document.getElementById('stat-leads').innerText = formatN(tMsj);
+
+            updateGauge(tVT, tMeta);
+        }
+
+        function updateGauge(val, target) {
+            const ctx = document.getElementById('gaugeChart').getContext('2d');
+            document.getElementById('gaugeValue').innerText = formatQ(val);
+            document.getElementById('gaugeTarget').innerText = `Goal: ${formatQ(target)}`;
+
+            if (gaugeObj) gaugeObj.destroy();
+
+            gaugeObj = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    datasets: [{
+                        data: [val, Math.max(0, target - val)],
+                        backgroundColor: ['#3b82f6', '#334155'],
+                        borderWidth: 0,
+                        circumference: 180,
+                        rotation: 270,
+                        cutout: '80%'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false }, tooltip: { enabled: false } }
+                }
+            });
+        }
+    </script>
+</body>
+</html>
